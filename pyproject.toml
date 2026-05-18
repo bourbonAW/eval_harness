@@ -1,0 +1,16 @@
+[project]
+name = "customer-service-chat-bot-eval"
+version = "0.1.0"
+description = "Stage 2 eval dataset pipeline for a customer service chatbot."
+readme = "eval-flywheel-plan.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.0",
+    "requests>=2.31.0",
+    "rich>=13.7.0",
+    "python-dotenv>=1.0.0",
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
