@@ -2,9 +2,10 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Set
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 
@@ -29,9 +30,12 @@ def load_jsonl(path: Path) -> List[dict]:
     return items
 
 
+def load_annotated_ids(dataset_path: Path) -> Set[str]:
+    return {s["id"] for s in load_jsonl(dataset_path)}
+
+
 def needs_annotation(trace_id: str, dataset_path: Path) -> bool:
-    annotated_ids = {s["id"] for s in load_jsonl(dataset_path)}
-    return trace_id not in annotated_ids
+    return trace_id not in load_annotated_ids(dataset_path)
 
 
 def save_annotation(sample: AnnotatedSample, dataset_path: Path) -> None:
@@ -41,24 +45,28 @@ def save_annotation(sample: AnnotatedSample, dataset_path: Path) -> None:
 
 
 def _display(trace: Trace, expected_answer: str) -> None:
-    console.print(Panel(trace["question"], title="[bold blue]问题", border_style="blue"))
+    # escape() user-provided content — bot responses or retrieved chunks may
+    # contain literal substrings like "[bold]" which Rich would otherwise
+    # interpret as markup (swallow text, or raise MarkupError mid-annotation).
+    console.print(Panel(escape(trace["question"]), title="[bold blue]问题", border_style="blue"))
     if trace["conversation_history"]:
         console.print("[dim]--- 对话历史 ---[/dim]")
         for turn in trace["conversation_history"]:
             label = "用户" if turn["role"] == "user" else "Bot"
-            console.print(f"  [dim][{label}] {turn['content']}[/dim]")
+            console.print(f"  [dim][{label}] {escape(turn['content'])}[/dim]")
         console.print()
     if trace["retrieved_chunks"]:
+        chunks_text = "\n---\n".join(escape(c) for c in trace["retrieved_chunks"])
         console.print(
             Panel(
-                "\n---\n".join(trace["retrieved_chunks"]),
+                chunks_text,
                 title="[bold yellow]检索到的 Context",
                 border_style="yellow",
             )
         )
-    console.print(Panel(trace["actual_answer"], title="[bold green]Bot 实际回复", border_style="green"))
+    console.print(Panel(escape(trace["actual_answer"]), title="[bold green]Bot 实际回复", border_style="green"))
     if expected_answer:
-        console.print(Panel(expected_answer, title="[dim]参考答案（仅供参考，不参与评分）", border_style="dim"))
+        console.print(Panel(escape(expected_answer), title="[dim]参考答案（仅供参考，不参与评分）", border_style="dim"))
 
 
 def annotate_interactive(
@@ -69,7 +77,9 @@ def annotate_interactive(
 ) -> None:
     traces = load_jsonl(traces_path)
     questions_by_id: dict[str, Question] = {q["id"]: q for q in load_jsonl(questions_path)}
-    pending = [t for t in traces if needs_annotation(t["id"], dataset_path)]
+    # Load the annotated ID set once instead of re-reading dataset.jsonl per trace.
+    annotated_ids = load_annotated_ids(dataset_path)
+    pending = [t for t in traces if t["id"] not in annotated_ids]
 
     console.print(f"\n[bold]待标注：{len(pending)} 条 / 已完成：{len(traces) - len(pending)} 条[/bold]\n")
     if not pending:

@@ -1,8 +1,11 @@
 from pathlib import Path
 
+import pytest
+from openpyxl import Workbook
+
 from eval.importers.excel_importer import import_questions
 
-FIXTURE = Path("tests/fixtures/test_questions.xlsx")
+FIXTURE = Path(__file__).parent / "fixtures" / "test_questions.xlsx"
 
 
 def test_import_count():
@@ -66,29 +69,98 @@ def test_prohibited_mapping():
         assert q["is_prohibited"] is False
 
 
-def test_empty_rows_do_not_skip_ids(tmp_path):
-    from openpyxl import Workbook
+_HEADERS = [
+    "用户输入的问题",
+    "期望的回复",
+    "关联的政策",
+    "关联的文档",
+    "申报入口",
+    "是否多意图",
+    "知识类型",
+    "问题是否违禁",
+    "备注",
+]
 
+
+def _make_xlsx(tmp_path, rows):
     wb = Workbook()
     ws = wb.active
-    ws.append(
-        [
-            "用户输入的问题",
-            "期望的回复",
-            "关联的政策",
-            "关联的文档",
-            "申报入口",
-            "是否多意图",
-            "知识类型",
-            "问题是否违禁",
-            "备注",
-        ]
-    )
-    ws.append(["问题A", "答案A", "u1", "u2", "d.docx", "单意图", "文档", "正常", ""])
-    ws.append([None] * 9)
-    ws.append(["问题B", "答案B", "u1", "u2", "d.docx", "单意图", "文档", "正常", ""])
-    path = tmp_path / "with_empty.xlsx"
+    ws.append(_HEADERS)
+    for row in rows:
+        ws.append(row)
+    path = tmp_path / "fixture.xlsx"
     wb.save(path)
+    return path
 
+
+def test_empty_rows_do_not_skip_ids(tmp_path):
+    path = _make_xlsx(
+        tmp_path,
+        [
+            ["问题A", "答案A", "u1", "u2", "d.docx", "单意图", "文档", "正常", ""],
+            [None] * 9,
+            ["问题B", "答案B", "u1", "u2", "d.docx", "单意图", "文档", "正常", ""],
+        ],
+    )
     questions = import_questions(path)
     assert [q["id"] for q in questions] == ["q_001", "q_002"]
+
+
+def test_empty_multi_intent_cell_defaults_to_false(tmp_path):
+    """Empty multi-intent cell should mean '单意图' (safe default), not silently
+    flag the row as multi-intent."""
+    path = _make_xlsx(
+        tmp_path,
+        [["问题A", "答案A", "u1", "u2", "d.docx", "", "文档", "", ""]],
+    )
+    questions = import_questions(path)
+    assert questions[0]["is_multi_intent"] is False
+    assert questions[0]["is_prohibited"] is False
+
+
+def test_unknown_multi_intent_raises_with_row_number(tmp_path):
+    path = _make_xlsx(
+        tmp_path,
+        [["问题A", "答案A", "u1", "u2", "d.docx", "三意图", "文档", "正常", ""]],
+    )
+    with pytest.raises(ValueError, match=r"row 2.*is_multi_intent.*三意图"):
+        import_questions(path)
+
+
+def test_unknown_prohibited_raises_with_row_number(tmp_path):
+    path = _make_xlsx(
+        tmp_path,
+        [
+            ["问题A", "答案A", "u1", "u2", "d.docx", "单意图", "文档", "正常", ""],
+            ["问题B", "答案B", "u1", "u2", "d.docx", "单意图", "文档", "未知状态", ""],
+        ],
+    )
+    with pytest.raises(ValueError, match=r"row 3.*is_prohibited.*未知状态"):
+        import_questions(path)
+
+
+def test_unknown_knowledge_type_raises_with_row_number(tmp_path):
+    path = _make_xlsx(
+        tmp_path,
+        [["问题A", "答案A", "u1", "u2", "d.docx", "单意图", "外部检索", "正常", ""]],
+    )
+    with pytest.raises(ValueError, match=r"row 2.*knowledge_type.*外部检索"):
+        import_questions(path)
+
+
+def test_named_sheet_selection(tmp_path):
+    """import_questions should honor explicit sheet_name and not just fall back
+    to the first/active sheet."""
+    wb = Workbook()
+    first = wb.active
+    first.title = "junk"
+    first.append(["irrelevant"])
+    real = wb.create_sheet("data")
+    real.append(_HEADERS)
+    real.append(["问题A", "答案A", "u1", "u2", "d.docx", "单意图", "文档", "正常", ""])
+    path = tmp_path / "multi.xlsx"
+    wb.save(path)
+
+    questions = import_questions(path, sheet_name="data")
+    assert len(questions) == 1
+    assert questions[0]["question"] == "问题A"

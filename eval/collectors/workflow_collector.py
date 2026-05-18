@@ -2,7 +2,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import requests
 
@@ -41,6 +41,15 @@ class WorkflowCollector:
         )
 
     def collect(self, question: Question) -> Trace:
+        """Collect a trace for one question.
+
+        trace.id is set to question.id (deterministic across runs). This means
+        re-running the collector for the same questions will produce traces with
+        identical IDs — and annotate.needs_annotation will then skip them as
+        already-annotated. To re-annotate after a workflow change, either remove
+        the corresponding rows from dataset.jsonl first or write traces to a
+        separate file path.
+        """
         raw = self._call_api(
             query=question["question"],
             conversation_history=question["conversation_history"],
@@ -75,20 +84,46 @@ class WorkflowCollector:
         return resp.json()
 
 
-def collect_all(questions_path: Path, output_path: Path) -> None:
-    from dotenv import load_dotenv
+def collect_all(
+    questions_path: Path,
+    output_path: Path,
+    collector: Optional[WorkflowCollector] = None,
+) -> dict:
+    """Collect traces for every question in questions_path.
 
-    load_dotenv()
-    collector = WorkflowCollector.from_env()
+    Overwrites output_path (write-once-per-run). Per-question failures are caught,
+    logged, and recorded — they do not abort the batch. Returns a summary dict
+    with success/failure counts.
+    """
+    if collector is None:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        collector = WorkflowCollector.from_env()
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    succeeded = 0
+    failed: List[str] = []
+
     with open(questions_path, encoding="utf-8") as f_in, open(
-        output_path, "a", encoding="utf-8"
+        output_path, "w", encoding="utf-8"
     ) as f_out:
         for line in f_in:
             q: Question = json.loads(line)
-            trace = collector.collect(q)
+            try:
+                trace = collector.collect(q)
+            except Exception as e:
+                failed.append(q["id"])
+                print(f"  [FAIL  {q['id']}] {type(e).__name__}: {e}", file=sys.stderr)
+                continue
             f_out.write(json.dumps(trace, ensure_ascii=False) + "\n")
-            print(f"  [{trace['id']}] {q['question'][:40]}...")
+            succeeded += 1
+            print(f"  [OK    {trace['id']}] {q['question'][:40]}...")
+
+    print(f"\nDone: {succeeded} succeeded, {len(failed)} failed")
+    if failed:
+        print(f"Failed question IDs: {', '.join(failed)}", file=sys.stderr)
+    return {"succeeded": succeeded, "failed": failed}
 
 
 if __name__ == "__main__":
