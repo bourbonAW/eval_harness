@@ -2,9 +2,9 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 
-from eval.annotate import _CATEGORIES, load_jsonl, load_latest_annotations, save_annotation
+from eval.annotate import _CATEGORIES, _CATEGORY_LABELS, load_jsonl, load_latest_annotations, save_annotation
 
 
 def create_app(
@@ -81,5 +81,9 @@ def create_app(
         }
         save_annotation(sample, app.config["DATASET_PATH"])
         return jsonify({"ok": True, "annotation": sample})
+
+    @app.get("/")
+    def index():
+        return render_template("annotate.html", categories=_CATEGORY_LABELS)
 
     return app

@@ -279,3 +279,12 @@ def test_annotated_at_is_server_timestamp(client, data_dir):
     ts = resp.get_json()["annotation"]["annotated_at"]
     assert ts.startswith("20")  # server-generated, current year not 1999
     assert "1999" not in ts
+
+
+def test_get_root_returns_html(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/html"
+    text = resp.get_data(as_text=True)
+    # categories must be embedded via Jinja so frontend doesn't drift from backend
+    assert "hallucination" in text
