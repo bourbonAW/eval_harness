@@ -97,15 +97,34 @@ git commit -m "chore: add flask>=3.0 dependency for HTML annotation tool"
 
 - [ ] **Step 1: Write failing tests**
 
-Open `tests/test_annotate.py` and add these tests at the bottom of the file (keep existing tests untouched). Also add the new import.
+Open `tests/test_annotate.py` and add these tests at the bottom of the file (keep existing tests untouched). Also add the new symbol to the existing import block — do NOT replace the block, only append the new name; existing tests still reference `annotate_interactive` and `load_annotated_ids`.
 
-At the top, change the import line:
+At the top of the file, the existing import block is:
 
 ```python
-from eval.annotate import load_jsonl, needs_annotation, save_annotation, load_latest_annotations
+from eval.annotate import (
+    annotate_interactive,
+    load_annotated_ids,
+    load_jsonl,
+    needs_annotation,
+    save_annotation,
+)
 ```
 
-At the bottom, append:
+Add `load_latest_annotations` to that block so it becomes:
+
+```python
+from eval.annotate import (
+    annotate_interactive,
+    load_annotated_ids,
+    load_jsonl,
+    load_latest_annotations,
+    needs_annotation,
+    save_annotation,
+)
+```
+
+At the bottom of the file, append:
 
 ```python
 def test_load_latest_annotations_picks_last_version(tmp_path):
