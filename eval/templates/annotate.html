@@ -1,11 +1,295 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head><meta charset="UTF-8"><title>标注 - Eval Stage 2</title></head>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>标注 - Eval Stage 2</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; margin: 0 auto; padding: 20px; max-width: 1100px; color: #222; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    .progress { color: #666; font-size: 14px; font-weight: normal; margin-left: 12px; }
+    .strip { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0; }
+    .chip { padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; border: 2px solid transparent; user-select: none; }
+    .chip[data-status="unannotated"] { background: #e5e5e5; color: #555; }
+    .chip[data-status="pass"] { background: #d4f4dd; color: #1a6d2f; }
+    .chip[data-status="fail"] { background: #fbd5d5; color: #8a1d1d; }
+    .chip[data-status="skip"] { background: #fdebc8; color: #7a5a14; }
+    .chip.current { border-color: #2563eb; }
+    .panel { margin-bottom: 12px; border-radius: 4px; padding: 10px 14px; border-left: 4px solid; background: #fafafa; }
+    .panel.question { border-left-color: #2563eb; }
+    .panel.answer { border-left-color: #16a34a; background: #f0faf3; }
+    .panel.expected { border-left-color: #999; background: #f5f5f5; color: #555; font-size: 14px; }
+    .panel .body { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; font-size: 14px; }
+    details { margin-bottom: 10px; }
+    details summary { cursor: pointer; padding: 6px 0; color: #555; font-size: 13px; }
+    details > div { padding: 8px 12px; border-left: 3px solid #eee; background: #fafafa; white-space: pre-wrap; word-break: break-word; font-size: 13px; }
+    .refs { font-size: 13px; color: #555; margin: 8px 0; }
+    .refs a { color: #2563eb; text-decoration: none; margin-right: 12px; }
+    .form { margin-top: 16px; padding: 14px; background: #f9f9f9; border-radius: 6px; }
+    .labels { display: flex; gap: 10px; margin-bottom: 12px; }
+    .labels button { flex: 1; padding: 12px; font-size: 16px; border: 2px solid #ddd; background: white; cursor: pointer; border-radius: 4px; }
+    .labels button.selected[data-label="pass"] { background: #16a34a; color: white; border-color: #16a34a; }
+    .labels button.selected[data-label="fail"] { background: #dc2626; color: white; border-color: #dc2626; }
+    .labels button.selected[data-label="skip"] { background: #eab308; color: white; border-color: #eab308; }
+    .fail-section { display: none; margin-bottom: 12px; }
+    .fail-section.shown { display: block; }
+    .fail-section textarea { width: 100%; min-height: 60px; padding: 8px; font-family: inherit; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; }
+    .fail-section textarea.error { border-color: #dc2626; }
+    .categories { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .categories label { font-size: 13px; padding: 4px 8px; cursor: pointer; }
+    .actions { display: flex; gap: 8px; }
+    .actions button { padding: 8px 14px; font-size: 14px; border: 1px solid #ddd; background: white; cursor: pointer; border-radius: 4px; }
+    .actions button.primary { background: #2563eb; color: white; border-color: #2563eb; }
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 10px 16px; border-radius: 4px; font-size: 14px; display: none; }
+    .toast.show { display: block; }
+    .toast.error { background: #fbd5d5; color: #8a1d1d; }
+    .toast.success { background: #d4f4dd; color: #1a6d2f; }
+    .hint { font-size: 12px; color: #888; margin-top: 8px; }
+  </style>
+</head>
 <body>
-  <p>HTML 标注工具占位页 - Task 6 会填实际 UI。</p>
-  <script>
-    // Embedded by Jinja so frontend categories never drift from backend _CATEGORIES.
-    const FAILURE_CATEGORIES = {{ categories | tojson }};
-  </script>
+  <h1>Eval 标注 <span class="progress" id="progress"></span></h1>
+  <div class="strip" id="strip"></div>
+  <div id="detail">加载中...</div>
+  <div class="form" id="form" style="display:none">
+    <div class="labels">
+      <button data-label="pass" onclick="selectLabel('pass')">Pass (1)</button>
+      <button data-label="fail" onclick="selectLabel('fail')">Fail (2)</button>
+      <button data-label="skip" onclick="selectLabel('skip')">Skip (3)</button>
+    </div>
+    <div class="fail-section" id="failSection">
+      <label>失败原因（一句话）：</label>
+      <textarea id="critique" placeholder="为什么 fail？"></textarea>
+      <div class="categories" id="categories"></div>
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="save()">保存 (Enter)</button>
+      <button onclick="navigate(-1)">上一条 (←)</button>
+      <button onclick="navigate(1)">下一条 (→)</button>
+    </div>
+    <div class="hint">快捷键：1=Pass 2=Fail 3=Skip ←/→ 切换条 Enter 保存（critique 框内 Ctrl+Enter 保存）</div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+// Categories are embedded by Jinja so the frontend never drifts from backend _CATEGORIES.
+const FAILURE_CATEGORIES = {{ categories | tojson }};
+let traces = [];
+let currentIndex = 0;
+let currentLabel = null;
+
+async function init() {
+  try {
+    const resp = await fetch('/api/traces');
+    if (!resp.ok) throw new Error('GET /api/traces ' + resp.status);
+    traces = await resp.json();
+  } catch (e) {
+    document.getElementById('detail').textContent = '加载失败：' + e.message;
+    return;
+  }
+  if (!traces.length) {
+    document.getElementById('detail').textContent = '没有任何 trace';
+    return;
+  }
+  renderCategories();
+  const firstUnannotated = traces.findIndex(t => t.latest_annotation === null);
+  currentIndex = firstUnannotated >= 0 ? firstUnannotated : 0;
+  render();
+}
+
+function renderCategories() {
+  const container = document.getElementById('categories');
+  container.innerHTML = '';
+  for (const [key, label] of Object.entries(FAILURE_CATEGORIES)) {
+    const wrap = document.createElement('label');
+    wrap.innerHTML = `<input type="radio" name="failure_category" value="${key}"> ${escapeHtml(label)}`;
+    container.appendChild(wrap);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function render() {
+  renderStrip();
+  renderDetail();
+  renderForm();
+  document.getElementById('form').style.display = 'block';
+}
+
+function renderStrip() {
+  const strip = document.getElementById('strip');
+  strip.innerHTML = '';
+  let done = 0;
+  traces.forEach((entry, i) => {
+    const ann = entry.latest_annotation;
+    const status = ann ? ann.label : 'unannotated';
+    if (ann) done++;
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (i === currentIndex ? ' current' : '');
+    chip.dataset.status = status;
+    chip.textContent = entry.trace.id;
+    chip.onclick = () => { currentIndex = i; render(); };
+    strip.appendChild(chip);
+  });
+  document.getElementById('progress').textContent = `${done}/${traces.length} 已完成`;
+}
+
+function renderDetail() {
+  const entry = traces[currentIndex];
+  const t = entry.trace;
+  let html = `<div class="panel question"><strong>问题</strong><div class="body">${escapeHtml(t.question)}</div></div>`;
+  if (t.complete_question && t.complete_question !== t.question) {
+    html += `<details><summary>检索 query</summary><div>${escapeHtml(t.complete_question)}</div></details>`;
+  }
+  if (t.conversation_history && t.conversation_history.length) {
+    const histText = t.conversation_history
+      .map(turn => `[${turn.role === 'user' ? '用户' : 'Bot'}] ${turn.content}`)
+      .join('\n');
+    html += `<details><summary>对话历史（${t.conversation_history.length} 条）</summary><div>${escapeHtml(histText)}</div></details>`;
+  }
+  if (t.doc_context) {
+    html += `<details><summary>文档 Context (doc_str)</summary><div>${escapeHtml(t.doc_context)}</div></details>`;
+  }
+  if (t.faq_context) {
+    html += `<details><summary>FAQ Context (faq_str)</summary><div>${escapeHtml(t.faq_context)}</div></details>`;
+  }
+  if (t.references && t.references.length) {
+    const refs = t.references
+      .map(r => `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">[${escapeHtml(r.doc_id)}] ${escapeHtml(r.name)}</a>`)
+      .join('');
+    html += `<div class="refs">引用：${refs}</div>`;
+  }
+  html += `<div class="panel answer"><strong>Bot 实际回复</strong><div class="body">${escapeHtml(t.actual_answer)}</div></div>`;
+  if (entry.expected_answer) {
+    html += `<div class="panel expected"><strong>参考答案</strong>（仅供参考，不参与评分）<div class="body">${escapeHtml(entry.expected_answer)}</div></div>`;
+  }
+  document.getElementById('detail').innerHTML = html;
+}
+
+function renderForm() {
+  const entry = traces[currentIndex];
+  const ann = entry.latest_annotation;
+  currentLabel = ann ? ann.label : null;
+  document.querySelectorAll('.labels button').forEach(b => b.classList.remove('selected'));
+  if (currentLabel) {
+    document.querySelector(`.labels button[data-label="${currentLabel}"]`).classList.add('selected');
+  }
+  document.getElementById('critique').value = ann && ann.label === 'fail' ? ann.critique : '';
+  document.getElementById('critique').classList.remove('error');
+  document.querySelectorAll('input[name="failure_category"]').forEach(r => r.checked = false);
+  if (ann && ann.label === 'fail' && ann.failure_category) {
+    const el = document.querySelector(`input[name="failure_category"][value="${ann.failure_category}"]`);
+    if (el) el.checked = true;
+  }
+  document.getElementById('failSection').classList.toggle('shown', currentLabel === 'fail');
+}
+
+function selectLabel(label) {
+  currentLabel = label;
+  document.querySelectorAll('.labels button').forEach(b => b.classList.remove('selected'));
+  document.querySelector(`.labels button[data-label="${label}"]`).classList.add('selected');
+  document.getElementById('failSection').classList.toggle('shown', label === 'fail');
+  if (label === 'fail') {
+    setTimeout(() => document.getElementById('critique').focus(), 0);
+  }
+}
+
+function navigate(delta) {
+  const next = currentIndex + delta;
+  if (next < 0 || next >= traces.length) return;
+  currentIndex = next;
+  render();
+}
+
+async function save() {
+  if (!currentLabel) {
+    showToast('请先选择 Pass/Fail/Skip', 'error');
+    return;
+  }
+  const critique = document.getElementById('critique').value.trim();
+  const category = document.querySelector('input[name="failure_category"]:checked');
+  if (currentLabel === 'fail') {
+    if (!critique) {
+      document.getElementById('critique').classList.add('error');
+      document.getElementById('critique').focus();
+      showToast('fail 必须填写 critique', 'error');
+      return;
+    }
+    if (!category) {
+      showToast('fail 必须选择失败类型', 'error');
+      return;
+    }
+  }
+  const entry = traces[currentIndex];
+  try {
+    const resp = await fetch('/api/annotate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        trace_id: entry.trace.id,
+        label: currentLabel,
+        critique: currentLabel === 'fail' ? critique : '',
+        failure_category: currentLabel === 'fail' ? category.value : null,
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: 'HTTP ' + resp.status}));
+      showToast('保存失败：' + (err.error || resp.status), 'error');
+      return;
+    }
+    const body = await resp.json();
+    entry.latest_annotation = body.annotation;
+    showToast('已保存', 'success');
+    renderStrip();
+    const next = traces.findIndex((t, i) => i > currentIndex && t.latest_annotation === null);
+    if (next >= 0) {
+      currentIndex = next;
+      render();
+    } else {
+      const before = traces.findIndex(t => t.latest_annotation === null);
+      if (before >= 0) {
+        currentIndex = before;
+        render();
+      } else {
+        showToast('全部完成！', 'success');
+      }
+    }
+  } catch (e) {
+    showToast('保存失败：网络错误 ' + e.message, 'error');
+  }
+}
+
+let toastTimer = null;
+function showToast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (kind || '');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+document.addEventListener('keydown', e => {
+  const tag = e.target.tagName;
+  if (tag === 'TEXTAREA') {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      save();
+    }
+    return;
+  }
+  if (tag === 'INPUT') return;
+  if (e.key === '1') selectLabel('pass');
+  else if (e.key === '2') selectLabel('fail');
+  else if (e.key === '3') selectLabel('skip');
+  else if (e.key === 'ArrowLeft') navigate(-1);
+  else if (e.key === 'ArrowRight') navigate(1);
+  else if (e.key === 'Enter') { e.preventDefault(); save(); }
+});
+
+init();
+</script>
 </body>
 </html>
