@@ -87,3 +87,23 @@ def create_app(
         return render_template("annotate.html", categories=_CATEGORY_LABELS)
 
     return app
+
+
+def _main() -> None:
+    parser = argparse.ArgumentParser(description="HTML 标注工具")
+    parser.add_argument("--annotator", required=True, help="标注者名字（写入 dataset.jsonl 的 annotated_by 字段）")
+    parser.add_argument("--port", type=int, default=5000)
+    args = parser.parse_args()
+
+    app = create_app(
+        traces_path=Path("data/traces.jsonl"),
+        questions_path=Path("data/questions.jsonl"),
+        dataset_path=Path("data/dataset.jsonl"),
+        annotator=args.annotator,
+    )
+    print(f"标注工具运行在 http://127.0.0.1:{args.port}  （标注者：{args.annotator}）")
+    app.run(host="127.0.0.1", port=args.port, debug=False)
+
+
+if __name__ == "__main__":
+    _main()
