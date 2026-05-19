@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from eval.annotate import (
     annotate_interactive,
     load_annotated_ids,
@@ -15,10 +13,23 @@ SAMPLE_TRACE: Trace = {
     "id": "trace_001",
     "question_id": "q_001",
     "question": "最低要求是多少？",
+    "complete_question": "广州市申报专精特新最低要求是多少？",
     "conversation_history": [],
     "actual_answer": "根据政策，最低为500万元。",
-    "retrieved_chunks": ["原文：不低于500万元"],
-    "citations": ["https://policy.example.com"],
+    "doc_context": "1. [政策文件](https://policy.example.com)\n原文：不低于500万元",
+    "faq_context": "",
+    "references": [{"doc_id": 1, "name": "[1] 政策文件", "url": "https://policy.example.com"}],
+    "ref_num": 1,
+}
+
+_SAMPLE_ANNOTATED: AnnotatedSample = {
+    **SAMPLE_TRACE,
+    "expected_answer": "500万元。",
+    "label": "pass",
+    "critique": "",
+    "failure_category": None,
+    "annotated_by": "tester",
+    "annotated_at": "2026-05-18T10:00:00+00:00",
 }
 
 
@@ -47,48 +58,26 @@ def test_needs_annotation_true_when_dataset_missing(tmp_path):
 
 def test_needs_annotation_false_when_already_annotated(tmp_path):
     dataset = tmp_path / "dataset.jsonl"
-    sample: AnnotatedSample = {
-        **SAMPLE_TRACE,
-        "expected_answer": "500万元。",
-        "label": "pass",
-        "critique": "",
-        "failure_category": None,
-        "annotated_by": "tester",
-        "annotated_at": "2026-05-18T10:00:00+00:00",
-    }
-    dataset.write_text(json.dumps(sample, ensure_ascii=False) + "\n", encoding="utf-8")
+    dataset.write_text(json.dumps(_SAMPLE_ANNOTATED, ensure_ascii=False) + "\n", encoding="utf-8")
     assert needs_annotation("trace_001", dataset) is False
 
 
 def test_save_annotation_appends(tmp_path):
     dataset = tmp_path / "dataset.jsonl"
-    sample: AnnotatedSample = {
-        **SAMPLE_TRACE,
-        "expected_answer": "500万元。",
-        "label": "fail",
-        "critique": "回答正确但缺少来源引用。",
-        "failure_category": None,
-        "annotated_by": "tester",
-        "annotated_at": "2026-05-18T10:00:00+00:00",
-    }
-    save_annotation(sample, dataset)
-    save_annotation(sample, dataset)
+    save_annotation(_SAMPLE_ANNOTATED, dataset)
+    save_annotation(_SAMPLE_ANNOTATED, dataset)
     lines = dataset.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 2
 
 
 def test_save_annotation_does_not_enforce_critique(tmp_path):
-    """save_annotation is a pure write — enforcement of 'fail requires critique'
-    lives in the CLI loop, not here. See test_annotate_interactive_* below."""
+    """save_annotation is a pure write — enforcement lives in the CLI loop."""
     dataset = tmp_path / "dataset.jsonl"
     sample: AnnotatedSample = {
-        **SAMPLE_TRACE,
-        "expected_answer": "",
+        **_SAMPLE_ANNOTATED,
         "label": "fail",
         "critique": "",
         "failure_category": None,
-        "annotated_by": "tester",
-        "annotated_at": "2026-05-18T10:00:00+00:00",
     }
     save_annotation(sample, dataset)
     saved = json.loads(dataset.read_text(encoding="utf-8"))
@@ -160,6 +149,7 @@ def test_annotate_interactive_pass_path(tmp_path, monkeypatch):
     assert len(saved) == 1
     assert saved[0]["label"] == "pass"
     assert saved[0]["critique"] == ""
+    assert saved[0]["failure_category"] is None
     assert saved[0]["annotated_by"] == "tester"
     assert saved[0]["expected_answer"] == "500万元。"
 
@@ -174,12 +164,11 @@ def test_annotate_interactive_skip_path_writes_nothing(tmp_path, monkeypatch):
 
 
 def test_annotate_interactive_fail_requires_non_empty_critique(tmp_path, monkeypatch):
-    """Fail label with empty critique must re-prompt — first valid critique
-    is what gets saved."""
+    """Fail with empty critique re-prompts; first valid critique+category is saved."""
     traces_path, questions_path, dataset_path = _write_traces_and_questions(tmp_path)
 
-    # Sequence of Prompt.ask responses: label=fail, critique="", label=fail, critique="real reason"
-    responses = iter(["fail", "", "fail", "回答漏掉了关键约束"])
+    # Sequence: label=fail, critique="" (rejected), label=fail, critique="real", category=incomplete
+    responses = iter(["fail", "", "fail", "回答漏掉了关键约束", "incomplete"])
     monkeypatch.setattr("eval.annotate.Prompt.ask", lambda *a, **kw: next(responses))
 
     annotate_interactive(traces_path, questions_path, dataset_path, annotator_name="tester")
@@ -188,20 +177,26 @@ def test_annotate_interactive_fail_requires_non_empty_critique(tmp_path, monkeyp
     assert len(saved) == 1
     assert saved[0]["label"] == "fail"
     assert saved[0]["critique"] == "回答漏掉了关键约束"
+    assert saved[0]["failure_category"] == "incomplete"
+
+
+def test_annotate_interactive_fail_saves_category(tmp_path, monkeypatch):
+    """Fail label saves both critique and failure_category."""
+    traces_path, questions_path, dataset_path = _write_traces_and_questions(tmp_path)
+
+    responses = iter(["fail", "答案数字与context不符", "hallucination"])
+    monkeypatch.setattr("eval.annotate.Prompt.ask", lambda *a, **kw: next(responses))
+
+    annotate_interactive(traces_path, questions_path, dataset_path, annotator_name="tester")
+
+    saved = json.loads(dataset_path.read_text(encoding="utf-8").strip())
+    assert saved["failure_category"] == "hallucination"
+    assert saved["critique"] == "答案数字与context不符"
 
 
 def test_annotate_interactive_skips_already_annotated(tmp_path, monkeypatch):
     traces_path, questions_path, dataset_path = _write_traces_and_questions(tmp_path)
-    pre_existing: AnnotatedSample = {
-        **SAMPLE_TRACE,
-        "expected_answer": "500万元。",
-        "label": "pass",
-        "critique": "",
-        "failure_category": None,
-        "annotated_by": "prev",
-        "annotated_at": "2026-05-18T09:00:00+00:00",
-    }
-    dataset_path.write_text(json.dumps(pre_existing, ensure_ascii=False) + "\n", encoding="utf-8")
+    dataset_path.write_text(json.dumps(_SAMPLE_ANNOTATED, ensure_ascii=False) + "\n", encoding="utf-8")
 
     def should_not_be_called(*a, **kw):
         raise AssertionError("Prompt.ask should not be called for already-annotated traces")

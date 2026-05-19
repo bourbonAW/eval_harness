@@ -9,9 +9,20 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 
-from eval.schema import AnnotatedSample, Question, Trace
+from eval.schema import AnnotatedSample, FailureCategory, Question, Trace
 
 console = Console()
+
+_CATEGORY_LABELS: dict[FailureCategory, str] = {
+    "hallucination":  "幻觉        — 答案包含 context 不支持的内容",
+    "context_miss":   "检索偏题    — retrieved context 没覆盖问题",
+    "refusal_fail":   "拒答失败    — 应该说不知道但没有",
+    "citation_error": "引用错误    — 来源链接缺失或与内容不符",
+    "incomplete":     "回答不完整  — 遗漏关键信息",
+    "off_topic":      "答非所问    — 回答跑题",
+    "other":          "其他",
+}
+_CATEGORIES = list(_CATEGORY_LABELS.keys())
 
 
 def load_jsonl(path: Path) -> List[dict]:
@@ -26,6 +37,8 @@ def load_jsonl(path: Path) -> List[dict]:
             try:
                 items.append(json.loads(line))
             except json.JSONDecodeError as e:
+                # Append-only files can have a partial last line if a writer
+                # was killed mid-write. Skip and keep going.
                 console.print(f"[yellow][warn] skipping malformed line {lineno} in {path}: {e}[/yellow]")
     return items
 
@@ -45,28 +58,55 @@ def save_annotation(sample: AnnotatedSample, dataset_path: Path) -> None:
 
 
 def _display(trace: Trace, expected_answer: str) -> None:
-    # escape() user-provided content — bot responses or retrieved chunks may
-    # contain literal substrings like "[bold]" which Rich would otherwise
-    # interpret as markup (swallow text, or raise MarkupError mid-annotation).
+    # escape() prevents Rich from interpreting bot/chunk content as markup tags.
     console.print(Panel(escape(trace["question"]), title="[bold blue]问题", border_style="blue"))
+
+    if trace.get("complete_question") and trace["complete_question"] != trace["question"]:
+        console.print(f"[dim]  检索 query: {escape(trace['complete_question'])}[/dim]\n")
+
     if trace["conversation_history"]:
         console.print("[dim]--- 对话历史 ---[/dim]")
         for turn in trace["conversation_history"]:
             label = "用户" if turn["role"] == "user" else "Bot"
             console.print(f"  [dim][{label}] {escape(turn['content'])}[/dim]")
         console.print()
-    if trace["retrieved_chunks"]:
-        chunks_text = "\n---\n".join(escape(c) for c in trace["retrieved_chunks"])
+
+    if trace.get("doc_context"):
         console.print(
             Panel(
-                chunks_text,
-                title="[bold yellow]检索到的 Context",
+                escape(trace["doc_context"]),
+                title="[bold yellow]文档 Context (doc_str)",
                 border_style="yellow",
             )
         )
+
+    if trace.get("faq_context"):
+        console.print(
+            Panel(
+                escape(trace["faq_context"]),
+                title="[bold cyan]FAQ Context (faq_str)",
+                border_style="cyan",
+            )
+        )
+
+    if trace.get("references"):
+        refs = "  ".join(
+            f"[[{r['doc_id']}] {escape(r['name'])}]({escape(r['url'])})"
+            for r in trace["references"]
+        )
+        console.print(f"[dim]引用：{refs}[/dim]\n")
+
     console.print(Panel(escape(trace["actual_answer"]), title="[bold green]Bot 实际回复", border_style="green"))
+
     if expected_answer:
         console.print(Panel(escape(expected_answer), title="[dim]参考答案（仅供参考，不参与评分）", border_style="dim"))
+
+
+def _ask_failure_category() -> FailureCategory:
+    console.print("\n[bold]失败类型：[/bold]")
+    for key, label in _CATEGORY_LABELS.items():
+        console.print(f"  [cyan]{key:<16}[/cyan]{label}")
+    return Prompt.ask("选择类型", choices=_CATEGORIES)
 
 
 def annotate_interactive(
@@ -77,7 +117,6 @@ def annotate_interactive(
 ) -> None:
     traces = load_jsonl(traces_path)
     questions_by_id: dict[str, Question] = {q["id"]: q for q in load_jsonl(questions_path)}
-    # Load the annotated ID set once instead of re-reading dataset.jsonl per trace.
     annotated_ids = load_annotated_ids(dataset_path)
     pending = [t for t in traces if t["id"] not in annotated_ids]
 
@@ -93,23 +132,32 @@ def annotate_interactive(
 
         while True:
             label = Prompt.ask("标注结果", choices=["pass", "fail", "skip"], default="skip")
+
             if label == "skip":
                 console.print("[dim]已跳过[/dim]")
                 break
 
             critique = ""
+            failure_category = None
+
             if label == "fail":
                 critique = Prompt.ask("失败原因（一句话）").strip()
                 if not critique:
                     console.print("[red]fail 必须填写 critique，请重新输入[/red]")
                     continue
+                failure_category = _ask_failure_category()
 
             sample: AnnotatedSample = {
                 **trace,
+                "complete_question": trace.get("complete_question", trace["question"]),
+                "doc_context": trace.get("doc_context", ""),
+                "faq_context": trace.get("faq_context", ""),
+                "references": trace.get("references", []),
+                "ref_num": trace.get("ref_num", 0),
                 "expected_answer": q.get("expected_answer", ""),
                 "label": label,
                 "critique": critique,
-                "failure_category": None,
+                "failure_category": failure_category,
                 "annotated_by": annotator_name,
                 "annotated_at": datetime.now(timezone.utc).isoformat(),
             }
