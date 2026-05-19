@@ -132,3 +132,150 @@ def test_get_traces_reflects_existing_dataset(client, data_dir):
     by_id = {entry["trace"]["id"]: entry for entry in body}
     assert by_id["q_001"]["latest_annotation"]["label"] == "pass"
     assert by_id["q_002"]["latest_annotation"] is None
+
+
+def _read_dataset(data_dir: Path) -> list[dict]:
+    path = data_dir / "dataset.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_post_pass_appends_dataset(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "pass",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["annotation"]["label"] == "pass"
+    assert body["annotation"]["annotated_by"] == "tester"
+    assert body["annotation"]["expected_answer"] == "500万元。"
+
+    rows = _read_dataset(data_dir)
+    assert len(rows) == 1
+    assert rows[0]["id"] == "q_001"
+    assert rows[0]["label"] == "pass"
+
+
+def test_post_fail_without_critique_returns_400(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "fail",
+            "critique": "   ",
+            "failure_category": "hallucination",
+        },
+    )
+    assert resp.status_code == 400
+    assert "critique" in resp.get_json()["error"]
+    assert _read_dataset(data_dir) == []
+
+
+def test_post_fail_without_category_returns_400(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "fail",
+            "critique": "答非所问",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 400
+    assert "failure_category" in resp.get_json()["error"]
+    assert _read_dataset(data_dir) == []
+
+
+def test_post_skip_allows_empty_critique(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "skip",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 200
+    assert _read_dataset(data_dir)[0]["label"] == "skip"
+
+
+def test_post_unknown_trace_id_returns_404(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_999",
+            "label": "pass",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 404
+    assert _read_dataset(data_dir) == []
+
+
+def test_post_invalid_label_returns_400(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "maybe",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 400
+    assert _read_dataset(data_dir) == []
+
+
+def test_post_overwrites_via_append(client, data_dir):
+    client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "fail",
+            "critique": "缺少引用",
+            "failure_category": "citation_error",
+        },
+    )
+    client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "pass",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    rows = _read_dataset(data_dir)
+    assert len(rows) == 2
+    assert rows[-1]["label"] == "pass"
+
+    body = client.get("/api/traces").get_json()
+    by_id = {entry["trace"]["id"]: entry for entry in body}
+    assert by_id["q_001"]["latest_annotation"]["label"] == "pass"
+
+
+def test_annotated_at_is_server_timestamp(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "pass",
+            "critique": "",
+            "failure_category": None,
+            "annotated_at": "1999-01-01T00:00:00+00:00",
+        },
+    )
+    assert resp.status_code == 200
+    ts = resp.get_json()["annotation"]["annotated_at"]
+    assert ts.startswith("20")  # server-generated, current year not 1999
+    assert "1999" not in ts

@@ -1,9 +1,10 @@
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
-from eval.annotate import load_jsonl, load_latest_annotations
+from eval.annotate import _CATEGORIES, load_jsonl, load_latest_annotations, save_annotation
 
 
 def create_app(
@@ -35,5 +36,50 @@ def create_app(
                 }
             )
         return jsonify(result)
+
+    @app.post("/api/annotate")
+    def post_annotate():
+        body = request.get_json(silent=True) or {}
+        trace_id = body.get("trace_id")
+        label = body.get("label")
+        critique = (body.get("critique") or "").strip()
+        failure_category = body.get("failure_category")
+
+        if label not in ("pass", "fail", "skip"):
+            return jsonify({"error": "label 必须是 pass/fail/skip"}), 400
+
+        traces = load_jsonl(app.config["TRACES_PATH"])
+        trace = next((t for t in traces if t["id"] == trace_id), None)
+        if trace is None:
+            return jsonify({"error": f"trace_id {trace_id} 不存在"}), 404
+
+        if label == "fail":
+            if not critique:
+                return jsonify({"error": "fail 必须填写 critique"}), 400
+            if failure_category not in _CATEGORIES:
+                return jsonify({"error": "fail 必须选择 failure_category"}), 400
+        else:
+            critique = ""
+            failure_category = None
+
+        questions_by_id = {q["id"]: q for q in load_jsonl(app.config["QUESTIONS_PATH"])}
+        q = questions_by_id.get(trace["question_id"], {})
+
+        sample = {
+            **trace,
+            "complete_question": trace.get("complete_question", trace["question"]),
+            "doc_context": trace.get("doc_context", ""),
+            "faq_context": trace.get("faq_context", ""),
+            "references": trace.get("references", []),
+            "ref_num": trace.get("ref_num", 0),
+            "expected_answer": q.get("expected_answer", ""),
+            "label": label,
+            "critique": critique,
+            "failure_category": failure_category,
+            "annotated_by": app.config["ANNOTATOR"],
+            "annotated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        save_annotation(sample, app.config["DATASET_PATH"])
+        return jsonify({"ok": True, "annotation": sample})
 
     return app
