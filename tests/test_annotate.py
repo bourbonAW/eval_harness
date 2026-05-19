@@ -4,6 +4,7 @@ from eval.annotate import (
     annotate_interactive,
     load_annotated_ids,
     load_jsonl,
+    load_latest_annotations,
     needs_annotation,
     save_annotation,
 )
@@ -206,3 +207,39 @@ def test_annotate_interactive_skips_already_annotated(tmp_path, monkeypatch):
 
     lines = dataset_path.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 1  # unchanged
+
+
+def test_load_latest_annotations_picks_last_version(tmp_path):
+    dataset = tmp_path / "dataset.jsonl"
+    base: AnnotatedSample = {
+        **SAMPLE_TRACE,
+        "complete_question": SAMPLE_TRACE["question"],
+        "doc_context": "",
+        "faq_context": "",
+        "references": [],
+        "ref_num": 0,
+        "expected_answer": "500万元。",
+        "label": "fail",
+        "critique": "缺少引用",
+        "failure_category": "citation_error",
+        "annotated_by": "tester",
+        "annotated_at": "2026-05-18T10:00:00+00:00",
+    }
+    revised: AnnotatedSample = {
+        **base,
+        "label": "pass",
+        "critique": "",
+        "failure_category": None,
+        "annotated_at": "2026-05-18T11:00:00+00:00",
+    }
+    save_annotation(base, dataset)
+    save_annotation(revised, dataset)
+
+    latest = load_latest_annotations(dataset)
+    assert set(latest.keys()) == {SAMPLE_TRACE["id"]}
+    assert latest[SAMPLE_TRACE["id"]]["label"] == "pass"
+    assert latest[SAMPLE_TRACE["id"]]["annotated_at"] == "2026-05-18T11:00:00+00:00"
+
+
+def test_load_latest_annotations_empty_for_missing_file(tmp_path):
+    assert load_latest_annotations(tmp_path / "no.jsonl") == {}

@@ -47,6 +47,14 @@ def load_annotated_ids(dataset_path: Path) -> Set[str]:
     return {s["id"] for s in load_jsonl(dataset_path)}
 
 
+def load_latest_annotations(dataset_path: Path) -> dict[str, AnnotatedSample]:
+    # dataset.jsonl is append-only: last occurrence per id wins.
+    latest: dict[str, AnnotatedSample] = {}
+    for sample in load_jsonl(dataset_path):
+        latest[sample["id"]] = sample
+    return latest
+
+
 def needs_annotation(trace_id: str, dataset_path: Path) -> bool:
     return trace_id not in load_annotated_ids(dataset_path)
 
