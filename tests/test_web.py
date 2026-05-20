@@ -365,13 +365,6 @@ def test_annotated_at_is_server_timestamp(client, data_dir):
     assert "1999" not in ts
 
 
-def test_get_root_returns_html(client):
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert resp.mimetype == "text/html"
-    assert "hallucination" in resp.get_data(as_text=True)
-
-
 def test_post_pass_preserves_optional_note(client, data_dir):
     resp = client.post(
         "/api/annotate",

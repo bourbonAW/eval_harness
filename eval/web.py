@@ -154,6 +154,8 @@ def _main() -> None:
         judge_results_path=Path(args.judge_results),
         annotator=args.annotator,
     )
+    if args.annotator == "unknown":
+        print('WARNING: 未指定 --annotator，新标注的 annotated_by 将记为 "unknown"')
     print(f"Annotate UI: http://127.0.0.1:{args.port}/")
     print(f"Judge UI:    http://127.0.0.1:{args.port}/judge")
     app.run(host="127.0.0.1", port=args.port, debug=False)
