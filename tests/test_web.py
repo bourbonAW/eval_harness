@@ -1,0 +1,476 @@
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from eval.judges import DimensionResult, EvalResult
+from eval.web import create_app
+
+
+SAMPLE_QUESTIONS = [
+    {
+        "id": "q_001",
+        "question": "最低要求是多少？",
+        "expected_answer": "500万元。",
+        "source_policy_url": "https://policy.example.com",
+        "source_doc_url": "https://doc.example.com",
+        "source_doc_name": "指南.docx",
+        "is_multi_intent": False,
+        "knowledge_type": "文档",
+        "is_prohibited": False,
+        "conversation_history": [],
+        "notes": "",
+    },
+    {
+        "id": "q_002",
+        "question": "知识产权要求？",
+        "expected_answer": "至少3件发明专利。",
+        "source_policy_url": "https://policy.example.com",
+        "source_doc_url": "https://doc.example.com",
+        "source_doc_name": "指南.docx",
+        "is_multi_intent": False,
+        "knowledge_type": "文档",
+        "is_prohibited": False,
+        "conversation_history": [],
+        "notes": "",
+    },
+]
+
+SAMPLE_TRACES = [
+    {
+        "id": "q_001",
+        "question_id": "q_001",
+        "question": "最低要求是多少？",
+        "complete_question": "最低要求是多少？",
+        "conversation_history": [],
+        "actual_answer": "根据政策，最低为500万元。",
+        "doc_context": "原文：不低于500万元",
+        "faq_context": "",
+        "references": [{"doc_id": 1, "name": "指南", "url": "https://doc.example.com"}],
+        "ref_num": 1,
+    },
+    {
+        "id": "q_002",
+        "question_id": "q_002",
+        "question": "知识产权要求？",
+        "complete_question": "知识产权要求？",
+        "conversation_history": [],
+        "actual_answer": "至少3件发明专利。",
+        "doc_context": "",
+        "faq_context": "FAQ: 关于专利数量",
+        "references": [],
+        "ref_num": 0,
+    },
+]
+
+SAMPLE_ANNOTATION = {
+    "id": "q_001",
+    "question_id": "q_001",
+    "question": "最低要求是多少？",
+    "complete_question": "最低要求是多少？",
+    "conversation_history": [],
+    "actual_answer": "最低为500万元。",
+    "doc_context": "",
+    "faq_context": "",
+    "references": [],
+    "ref_num": 0,
+    "expected_answer": "500万元。",
+    "label": "pass",
+    "critique": "正确回答",
+    "failure_category": None,
+    "annotated_by": "tester",
+    "annotated_at": "2026-05-20T10:00:00+00:00",
+}
+
+SAMPLE_JUDGE_RESULT = {
+    "trace_id": "q_001",
+    "label": "pass",
+    "dimensions": [
+        {
+            "dimension": "answer_relevance",
+            "label": "pass",
+            "critique": "直接回答了问题",
+            "evidence": ["最低为500万元"],
+            "model": "mimo-v2.5-pro",
+        }
+    ],
+    "judged_at": "2026-05-20T10:05:00+00:00",
+}
+
+
+def _write_jsonl(path: Path, items: list[dict]) -> None:
+    path.write_text(
+        "\n".join(json.dumps(it, ensure_ascii=False) for it in items) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _read_dataset(data_dir: Path) -> list[dict]:
+    return _read_jsonl(data_dir / "dataset.jsonl")
+
+
+@pytest.fixture
+def data_dir(tmp_path: Path) -> Path:
+    _write_jsonl(tmp_path / "questions.jsonl", SAMPLE_QUESTIONS)
+    _write_jsonl(tmp_path / "traces.jsonl", SAMPLE_TRACES)
+    return tmp_path
+
+
+@pytest.fixture
+def client(data_dir):
+    app = create_app(
+        traces_path=data_dir / "traces.jsonl",
+        questions_path=data_dir / "questions.jsonl",
+        dataset_path=data_dir / "dataset.jsonl",
+        judge_results_path=data_dir / "judge_results.jsonl",
+        annotator="tester",
+    )
+    app.testing = True
+    return app.test_client()
+
+
+def test_get_traces_returns_human_annotation_key(client):
+    body = client.get("/api/traces").get_json()
+    assert "human_annotation" in body[0]
+    assert "latest_annotation" not in body[0]
+
+
+def test_get_traces_human_annotation_null_when_missing(client):
+    body = client.get("/api/traces").get_json()
+    for entry in body:
+        assert entry["human_annotation"] is None
+
+
+def test_get_traces_judge_result_null_when_missing(client):
+    body = client.get("/api/traces").get_json()
+    for entry in body:
+        assert entry["judge_result"] is None
+
+
+def test_get_root_serves_annotate_page(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/html"
+    assert "hallucination" in resp.get_data(as_text=True)
+
+
+def test_get_judge_serves_judge_page(client):
+    resp = client.get("/judge")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/html"
+    html = resp.get_data(as_text=True)
+    assert "Eval · Stage 4/5 Judge" in html
+    assert "运行 Judge" in html
+    assert 'href="/"' in html
+
+
+def test_get_root_html_uses_human_annotation_not_latest(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "human_annotation" in html
+    assert "latest_annotation" not in html
+    assert 'href="/judge"' in html
+
+
+def test_get_traces_returns_all_with_status(client):
+    resp = client.get("/api/traces")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert len(body) == 2
+    ids = [entry["trace"]["id"] for entry in body]
+    assert ids == ["q_001", "q_002"]
+    for entry in body:
+        assert entry["human_annotation"] is None
+
+
+def test_get_traces_merges_question_expected_answer(client):
+    body = client.get("/api/traces").get_json()
+    by_id = {entry["trace"]["id"]: entry for entry in body}
+    assert by_id["q_001"]["expected_answer"] == "500万元。"
+    assert by_id["q_002"]["expected_answer"] == "至少3件发明专利。"
+
+
+def test_get_traces_reflects_existing_dataset(client, data_dir):
+    sample = {
+        "id": "q_001",
+        "question_id": "q_001",
+        "question": "最低要求是多少？",
+        "complete_question": "最低要求是多少？",
+        "conversation_history": [],
+        "actual_answer": "根据政策，最低为500万元。",
+        "doc_context": "原文：不低于500万元",
+        "faq_context": "",
+        "references": [],
+        "ref_num": 1,
+        "expected_answer": "500万元。",
+        "label": "pass",
+        "critique": "",
+        "failure_category": None,
+        "annotated_by": "tester",
+        "annotated_at": "2026-05-18T10:00:00+00:00",
+    }
+    (data_dir / "dataset.jsonl").write_text(
+        json.dumps(sample, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    body = client.get("/api/traces").get_json()
+    by_id = {entry["trace"]["id"]: entry for entry in body}
+    assert by_id["q_001"]["human_annotation"]["label"] == "pass"
+    assert by_id["q_002"]["human_annotation"] is None
+
+
+def test_post_pass_appends_dataset(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "pass",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["annotation"]["label"] == "pass"
+    assert body["annotation"]["annotated_by"] == "tester"
+    assert body["annotation"]["expected_answer"] == "500万元。"
+
+    rows = _read_dataset(data_dir)
+    assert len(rows) == 1
+    assert rows[0]["id"] == "q_001"
+    assert rows[0]["label"] == "pass"
+
+
+def test_post_fail_without_critique_returns_400(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "fail",
+            "critique": "   ",
+            "failure_category": "hallucination",
+        },
+    )
+    assert resp.status_code == 400
+    assert "critique" in resp.get_json()["error"]
+    assert _read_dataset(data_dir) == []
+
+
+def test_post_fail_without_category_returns_400(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "fail",
+            "critique": "答非所问",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 400
+    assert "failure_category" in resp.get_json()["error"]
+    assert _read_dataset(data_dir) == []
+
+
+def test_post_skip_allows_empty_critique(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "skip",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 200
+    assert _read_dataset(data_dir)[0]["label"] == "skip"
+
+
+def test_post_unknown_trace_id_returns_404(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_999",
+            "label": "pass",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 404
+    assert _read_dataset(data_dir) == []
+
+
+def test_post_invalid_label_returns_400(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "maybe",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 400
+    assert _read_dataset(data_dir) == []
+
+
+def test_post_overwrites_via_append(client, data_dir):
+    client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "fail",
+            "critique": "缺少引用",
+            "failure_category": "citation_error",
+        },
+    )
+    client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "pass",
+            "critique": "",
+            "failure_category": None,
+        },
+    )
+    rows = _read_dataset(data_dir)
+    assert len(rows) == 2
+    assert rows[-1]["label"] == "pass"
+
+    body = client.get("/api/traces").get_json()
+    by_id = {entry["trace"]["id"]: entry for entry in body}
+    assert by_id["q_001"]["human_annotation"]["label"] == "pass"
+
+
+def test_annotated_at_is_server_timestamp(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "pass",
+            "critique": "",
+            "failure_category": None,
+            "annotated_at": "1999-01-01T00:00:00+00:00",
+        },
+    )
+    assert resp.status_code == 200
+    ts = resp.get_json()["annotation"]["annotated_at"]
+    assert ts.startswith("20")
+    assert "1999" not in ts
+
+
+def test_get_root_returns_html(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/html"
+    assert "hallucination" in resp.get_data(as_text=True)
+
+
+def test_post_pass_preserves_optional_note(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "pass",
+            "critique": "正确引用了第3条政策条文\n完整覆盖了申请要求",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 200
+    rows = _read_dataset(data_dir)
+    assert rows[0]["critique"] == "正确引用了第3条政策条文\n完整覆盖了申请要求"
+
+
+def test_post_skip_preserves_optional_note(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "skip",
+            "critique": "问题本身不明确，无法判断好坏",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 200
+    rows = _read_dataset(data_dir)
+    assert rows[0]["critique"] == "问题本身不明确，无法判断好坏"
+
+
+def test_get_traces_judge_result_is_none_when_not_run(client):
+    body = client.get("/api/traces").get_json()
+    assert body[0]["judge_result"] is None
+
+
+def test_get_traces_includes_judge_result_when_cached(client, data_dir):
+    _write_jsonl(data_dir / "judge_results.jsonl", [SAMPLE_JUDGE_RESULT])
+    body = client.get("/api/traces").get_json()
+    jr = body[0]["judge_result"]
+    assert jr is not None
+    assert jr["label"] == "pass"
+    assert jr["dimensions"][0]["dimension"] == "answer_relevance"
+
+
+def test_get_traces_includes_human_annotation_when_present(client, data_dir):
+    _write_jsonl(data_dir / "dataset.jsonl", [SAMPLE_ANNOTATION])
+    body = client.get("/api/traces").get_json()
+    assert body[0]["human_annotation"]["label"] == "pass"
+
+
+def test_get_traces_human_annotation_is_none_when_absent(client):
+    body = client.get("/api/traces").get_json()
+    assert body[0]["human_annotation"] is None
+
+
+def _fake_judge(trace, *, model="mimo-v2.5-pro"):
+    return EvalResult(
+        trace_id=trace["id"],
+        dimensions=[
+            DimensionResult(
+                dimension="answer_relevance",
+                label="pass",
+                critique="直接回答了问题",
+                evidence=["最低为500万元"],
+                model=model,
+            )
+        ],
+    )
+
+
+def test_post_judge_saves_result_and_returns_eval_result(client, data_dir):
+    with patch("eval.web.run_all_judges", side_effect=_fake_judge):
+        resp = client.post("/api/judge", json={"trace_id": "q_001"})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["label"] == "pass"
+    assert body["dimensions"][0]["dimension"] == "answer_relevance"
+
+    rows = _read_jsonl(data_dir / "judge_results.jsonl")
+    assert len(rows) == 1
+    assert rows[0]["trace_id"] == "q_001"
+    assert rows[0]["label"] == "pass"
+    assert "judged_at" in rows[0]
+
+
+def test_post_judge_unknown_trace_returns_404(client, data_dir):
+    with patch("eval.web.run_all_judges", side_effect=_fake_judge):
+        resp = client.post("/api/judge", json={"trace_id": "q_999"})
+    assert resp.status_code == 404
+    assert _read_jsonl(data_dir / "judge_results.jsonl") == []
+
+
+def test_post_judge_respects_model_param(client):
+    captured = {}
+
+    def fake_with_model(trace, *, model="mimo-v2.5-pro"):
+        captured["model"] = model
+        return _fake_judge(trace, model=model)
+
+    with patch("eval.web.run_all_judges", side_effect=fake_with_model):
+        client.post("/api/judge", json={"trace_id": "q_001", "model": "mimo-v2-omni"})
+    assert captured["model"] == "mimo-v2-omni"
