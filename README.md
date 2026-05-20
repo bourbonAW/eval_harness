@@ -50,9 +50,10 @@ uv run python -m eval.collectors.workflow_collector \
 **目标**：对每条 trace 打上 Pass/Fail 标签 + 失败原因。
 
 ```bash
-# 启动标注 UI（替换 yourname）
-uv run python -m eval.annotate_web --port 5000 --annotator yourname
-# 打开 http://127.0.0.1:5000
+# 启动标注 & Judge UI（替换 yourname）
+uv run python -m eval.web --port 5000 --annotator yourname
+# 标注 UI: http://127.0.0.1:5000/
+# Judge UI: http://127.0.0.1:5000/judge
 ```
 
 操作：
@@ -72,8 +73,8 @@ uv run python -m eval.annotate_web --port 5000 --annotator yourname
 
 ```bash
 # 启动 Judge UI
-uv run python -m eval.judge_web --port 5001
-# 打开 http://127.0.0.1:5001
+uv run python -m eval.web --port 5000
+# Judge UI: http://127.0.0.1:5000/judge
 ```
 
 操作：

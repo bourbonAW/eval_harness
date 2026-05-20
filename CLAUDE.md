@@ -25,11 +25,10 @@
 # 采集 traces（更新问题集后重跑）
 uv run python -m eval.collectors.workflow_collector data/questions.jsonl data/traces.jsonl
 
-# 标注 UI（Stage 2）
-uv run python -m eval.annotate_web --port 5000 --annotator <name>
-
-# Judge UI（Stage 4/5）
-uv run python -m eval.judge_web --port 5001
+# 标注 & Judge UI（单一服务）
+uv run python -m eval.web --port 5000 --annotator <name>
+# 标注 UI: http://127.0.0.1:5000/
+# Judge UI: http://127.0.0.1:5000/judge
 
 # 单元测试
 uv run pytest tests/ -m "not integration" -q
