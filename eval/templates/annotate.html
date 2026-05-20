@@ -294,6 +294,7 @@
       <div class="header">
         <span class="header-label">Eval · Stage 2</span>
         <span class="progress-badge" id="progress"></span>
+        <a href="/judge" style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-decoration:none;">Judge UI →</a>
       </div>
       <div class="strip" id="strip"></div>
       <div class="divider"></div>
@@ -374,7 +375,7 @@ async function init() {
     return;
   }
   renderCategories();
-  const firstUnannotated = traces.findIndex(t => t.latest_annotation === null);
+  const firstUnannotated = traces.findIndex(t => t.human_annotation === null);
   currentIndex = firstUnannotated >= 0 ? firstUnannotated : 0;
   render();
 }
@@ -405,7 +406,7 @@ function renderStrip() {
   strip.innerHTML = '';
   let done = 0;
   traces.forEach((entry, i) => {
-    const ann = entry.latest_annotation;
+    const ann = entry.human_annotation;
     const status = ann ? ann.label : 'unannotated';
     if (ann) done++;
     const chip = document.createElement('div');
@@ -454,7 +455,7 @@ function renderDetail() {
 
 function renderForm() {
   const entry = traces[currentIndex];
-  const ann = entry.latest_annotation;
+  const ann = entry.human_annotation;
   currentLabel = ann ? ann.label : null;
   document.querySelectorAll('.labels button').forEach(b => b.classList.remove('selected'));
   if (currentLabel) {
@@ -572,15 +573,15 @@ async function save() {
       return;
     }
     const body = await resp.json();
-    entry.latest_annotation = body.annotation;
+    entry.human_annotation = body.annotation;
     showToast('已保存', 'success');
     renderStrip();
-    const next = traces.findIndex((t, i) => i > currentIndex && t.latest_annotation === null);
+    const next = traces.findIndex((t, i) => i > currentIndex && t.human_annotation === null);
     if (next >= 0) {
       currentIndex = next;
       render();
     } else {
-      const before = traces.findIndex(t => t.latest_annotation === null);
+      const before = traces.findIndex(t => t.human_annotation === null);
       if (before >= 0) {
         currentIndex = before;
         render();
