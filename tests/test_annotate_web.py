@@ -288,3 +288,33 @@ def test_get_root_returns_html(client):
     text = resp.get_data(as_text=True)
     # categories must be embedded via Jinja so frontend doesn't drift from backend
     assert "hallucination" in text
+
+
+def test_post_pass_preserves_optional_note(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "pass",
+            "critique": "正确引用了第3条政策条文\n完整覆盖了申请要求",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 200
+    rows = _read_dataset(data_dir)
+    assert rows[0]["critique"] == "正确引用了第3条政策条文\n完整覆盖了申请要求"
+
+
+def test_post_skip_preserves_optional_note(client, data_dir):
+    resp = client.post(
+        "/api/annotate",
+        json={
+            "trace_id": "q_001",
+            "label": "skip",
+            "critique": "问题本身不明确，无法判断好坏",
+            "failure_category": None,
+        },
+    )
+    assert resp.status_code == 200
+    rows = _read_dataset(data_dir)
+    assert rows[0]["critique"] == "问题本身不明确，无法判断好坏"

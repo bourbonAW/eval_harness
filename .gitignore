@@ -3,7 +3,9 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-data/questions.jsonl
+# data/questions.jsonl — 人工维护，已提交
+# data/dataset.jsonl   — 人工维护，已提交
 data/traces.jsonl
-data/dataset.jsonl
+data/judge_results.jsonl
+data/judge_results_bak.jsonl
 tests/fixtures/test_questions.xlsx

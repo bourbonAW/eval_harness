@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stage 4/5 — Judge 结果</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:          #f4f2ee;
+      --surface:     #ffffff;
+      --surface-2:   #faf9f7;
+      --border:      #e8e3da;
+      --border-soft: #f0ece4;
+      --text:        #1c1a17;
+      --text-2:      #6b6356;
+      --text-3:      #a8a099;
+
+      --pass:        #16a34a;  --pass-light: #f0fdf4; --pass-mid: #dcfce7; --pass-border: #86efac;
+      --fail:        #dc2626;  --fail-light: #fef2f2; --fail-mid: #fee2e2; --fail-border: #fca5a5;
+      --skip:        #c2690a;  --skip-light: #fff7ed; --skip-mid: #fed7aa; --skip-border: #fdba74;
+      --blue:        #2563eb;  --blue-light: #eff6ff; --blue-border: #bfdbfe;
+      --none-mid:    #f1f0ed;  --none-border: #e8e3da;
+
+      --radius: 8px;
+      --sidebar-w: 380px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text); height: 100vh; overflow: hidden;
+    }
+
+    /* ── Layout ───────────────────────────────────────── */
+    .layout { display: grid; grid-template-columns: 1fr var(--sidebar-w); height: 100vh; }
+    .main { overflow-y: auto; padding: 24px 28px; }
+
+    /* ── Header ───────────────────────────────────────── */
+    .header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .header-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--text-3);
+    }
+    .validation-stats {
+      display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+      font-size: 12px; color: var(--text-muted);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 0; margin: 6px 0 0;
+    }
+    .stat-group {
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 14px; border-right: 1px solid var(--border);
+    }
+    .stat-group:last-child { border-right: none; }
+    .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; opacity: .6; }
+    .stat-val { font-weight: 700; font-size: 13px; color: var(--text); }
+    .stat-val.tp { color: var(--pass); }
+    .stat-val.fp { color: #e67e22; }
+    .stat-val.fn { color: var(--fail); }
+    .stat-val.tn { color: var(--text-muted); }
+    .stat-val.f1-good { color: var(--pass); }
+    .stat-val.f1-ok   { color: #e67e22; }
+    .stat-val.f1-bad  { color: var(--fail); }
+    .stat-pending { font-size: 12px; color: var(--text-muted); padding: 0 14px; }
+    .agreement-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: var(--text-3);
+    }
+    .agreement-badge .agree-num { color: var(--pass); font-weight: 700; }
+    .agreement-badge .disagree-num { color: var(--fail); font-weight: 700; }
+
+    /* ── Strip ─────────────────────────────────────────── */
+    .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 16px; }
+    .chip {
+      padding: 4px 8px; border-radius: 4px; cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; font-weight: 600; letter-spacing: .05em;
+      border: 1.5px solid var(--none-border);
+      background: linear-gradient(to right, var(--chip-l, var(--none-mid)) 0% 50%, var(--chip-r, var(--none-mid)) 50% 100%);
+      color: var(--text-2);
+      transition: opacity .12s, transform .08s;
+      position: relative;
+    }
+    .chip:active { transform: scale(.96); }
+    .chip.current { outline: 2px solid var(--blue); outline-offset: 1px; }
+    .chip:hover { opacity: .75; }
+
+    /* ── Divider / trace-id ───────────────────────────── */
+    .divider { height: 1px; background: var(--border); margin-bottom: 18px; }
+    .trace-id {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; font-weight: 600; letter-spacing: .1em; color: var(--text-3); margin-bottom: 12px;
+    }
+
+    /* ── Panels ───────────────────────────────────────── */
+    .panel {
+      background: var(--surface); border-radius: var(--radius);
+      padding: 14px 16px; margin-bottom: 10px;
+      border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    }
+    .panel-q  { border-left: 3px solid var(--blue); }
+    .panel-a  { border-left: 3px solid var(--pass); }
+    .panel-ex { border-left: 3px solid var(--border); opacity: .7; }
+    .panel-lbl {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; margin-bottom: 8px;
+    }
+    .panel-q  .panel-lbl { color: var(--blue); }
+    .panel-a  .panel-lbl { color: var(--pass); }
+    .panel-ex .panel-lbl { color: var(--text-3); }
+    .panel-body { font-size: 14px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
+    .panel-ex .panel-body { font-size: 13px; color: var(--text-2); }
+
+    details { margin-bottom: 6px; }
+    details summary {
+      cursor: pointer; font-size: 11px; color: var(--text-3);
+      padding: 5px 0; list-style: none;
+      display: flex; align-items: center; gap: 5px; user-select: none;
+    }
+    details summary::before { content: '▶'; font-size: 7px; transition: transform .15s; }
+    details[open] summary::before { transform: rotate(90deg); }
+    details summary::-webkit-details-marker { display: none; }
+    .details-body {
+      background: var(--surface-2); border-radius: 6px; padding: 10px 12px;
+      border: 1px solid var(--border-soft); margin-top: 4px;
+      font-size: 13px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: var(--text-2);
+    }
+
+    .refs { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+    .refs a {
+      font-size: 11px; color: var(--blue); text-decoration: none;
+      padding: 3px 8px; border-radius: 4px;
+      background: var(--blue-light); border: 1px solid var(--blue-border); transition: opacity .12s;
+    }
+    .refs a:hover { opacity: .7; }
+
+    /* ═══════════════════════════════════════════════════
+       SIDEBAR
+    ═══════════════════════════════════════════════════ */
+    .sidebar {
+      background: var(--surface); border-left: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow-y: auto;
+    }
+    #panel-form { display: flex; flex-direction: column; height: 100%; padding: 20px 18px; gap: 16px; }
+
+    .section-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 700; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--text-3); margin-bottom: 8px;
+    }
+
+    /* ── Verdict badge ─────────────────────────────────── */
+    .verdict-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .verdict-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 4px; border: 1.5px solid;
+    }
+    .verdict-badge.pass { background: var(--pass-mid); color: var(--pass); border-color: var(--pass-border); }
+    .verdict-badge.fail { background: var(--fail-mid); color: var(--fail); border-color: var(--fail-border); }
+    .verdict-badge.skip { background: var(--skip-mid); color: var(--skip); border-color: var(--skip-border); }
+    .verdict-badge.none { background: var(--none-mid); color: var(--text-3); border-color: var(--none-border); }
+
+    .agree-chip {
+      font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 4px;
+    }
+    .agree-chip.agree   { background: var(--pass-light); color: var(--pass); }
+    .agree-chip.disagree { background: var(--fail-light); color: var(--fail); }
+
+    /* ── Human section ─────────────────────────────────── */
+    .human-section {}
+    .human-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .failure-cat {
+      font-size: 11px; color: var(--text-3); padding: 3px 8px;
+      border-radius: 4px; background: var(--fail-light); border: 1px solid var(--fail-border);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .critique-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+    .critique-item {
+      font-size: 13px; line-height: 1.6; padding: 7px 10px;
+      border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface-2); color: var(--text-2);
+      position: relative; padding-left: 20px;
+    }
+    .critique-item::before {
+      content: '•'; position: absolute; left: 8px; color: var(--text-3); font-size: 14px;
+    }
+    .muted-msg {
+      font-size: 12px; color: var(--text-3); font-style: italic; padding: 6px 0;
+    }
+
+    /* ── Judge section ─────────────────────────────────── */
+    .judge-section {}
+    .judge-meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: var(--text-3); margin-bottom: 8px;
+    }
+    .dim-block { border-left: 2px solid var(--border); padding: 8px 0 8px 10px; margin-top: 10px; }
+    .dim-block:first-of-type { margin-top: 4px; }
+    .dim-header { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .dim-name { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+    .dim-model { font-size: 10px; color: var(--text-muted); margin-left: auto; }
+    .judge-critique {
+      font-size: 13px; line-height: 1.7; color: var(--text-2);
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;
+    }
+    .evidence-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+    .evidence-item {
+      font-size: 12px; line-height: 1.55; padding: 6px 10px;
+      border-radius: 5px; border: 1px solid var(--blue-border);
+      background: var(--blue-light); color: var(--text-2);
+      position: relative; padding-left: 20px;
+    }
+    .evidence-item::before {
+      content: '"'; position: absolute; left: 8px; color: var(--blue); font-size: 13px; font-weight: 700;
+    }
+
+    /* ── Loading spinner ───────────────────────────────── */
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid var(--border); border-top-color: var(--blue);
+      border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-msg { font-size: 13px; color: var(--text-3); }
+
+    /* ── Spacer + actions ─────────────────────────────── */
+    .spacer { flex: 1; min-height: 12px; }
+    .actions-section { border-top: 1px solid var(--border-soft); padding-top: 14px; }
+
+    .model-select {
+      width: 100%; padding: 8px 10px; font-size: 12px;
+      border: 1.5px solid var(--border); border-radius: 6px;
+      background: var(--surface-2); color: var(--text-2);
+      font-family: 'JetBrains Mono', monospace;
+      outline: none; margin-bottom: 8px; cursor: pointer;
+    }
+    .model-select:focus { border-color: var(--blue); }
+
+    .run-btn {
+      width: 100%; padding: 14px; font-size: 14px; font-weight: 700;
+      background: var(--blue); color: #fff; border: none;
+      border-radius: var(--radius); cursor: pointer; font-family: inherit;
+      box-shadow: 0 3px 10px rgba(37,99,235,.30); transition: all .14s;
+      margin-bottom: 6px; letter-spacing: .01em;
+    }
+    .run-btn:hover:not(:disabled) { background: #1d4ed8; box-shadow: 0 5px 16px rgba(37,99,235,.38); transform: translateY(-1px); }
+    .run-btn:active:not(:disabled) { transform: translateY(0); }
+    .run-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+    .run-all-btn {
+      width: 100%; padding: 9px; font-size: 12px; font-weight: 600;
+      border: 1.5px solid var(--border); background: var(--surface-2);
+      cursor: pointer; border-radius: var(--radius); color: var(--text-2);
+      font-family: inherit; transition: all .12s; margin-bottom: 8px;
+    }
+    .run-all-btn:hover:not(:disabled) { background: var(--bg); }
+    .run-all-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .nav-btns { display: flex; gap: 6px; }
+    .nav-btns button {
+      flex: 1; padding: 9px; font-size: 16px;
+      border: 1.5px solid var(--border); background: var(--surface-2);
+      cursor: pointer; border-radius: var(--radius); color: var(--text-2); transition: all .12s;
+    }
+    .nav-btns button:hover { background: var(--bg); }
+
+    .hint {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; color: var(--text-3); letter-spacing: .03em; line-height: 1.8;
+    }
+
+    /* ── Toast ─────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      padding: 9px 16px; border-radius: 8px; font-size: 13px;
+      display: none; z-index: 100; border: 1px solid; box-shadow: 0 4px 16px rgba(0,0,0,.12);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .toast.show  { display: block; }
+    .toast.error   { background: var(--fail-light); color: var(--fail); border-color: var(--fail-border); }
+    .toast.success { background: var(--pass-light); color: var(--pass); border-color: var(--pass-border); }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- ── Left: trace content ─────────────────────── -->
+  <div class="main">
+    <div class="header">
+      <span class="header-label">Eval · Stage 4/5 Judge</span>
+    </div>
+    <div class="strip" id="strip"></div>
+    <div id="validationStats"></div>
+    <div class="divider"></div>
+    <div id="detail">加载中...</div>
+  </div>
+
+  <!-- ── Right: sidebar ─────────────────────────── -->
+  <div class="sidebar">
+    <div id="panel-form">
+
+      <!-- Human annotation -->
+      <div class="human-section">
+        <div class="section-title">人工标注</div>
+        <div id="humanContent"><span class="muted-msg">加载中…</span></div>
+      </div>
+
+      <!-- Judge result -->
+      <div class="judge-section">
+        <div class="section-title">Judge 判定</div>
+        <div id="judgeContent"><span class="muted-msg">未运行</span></div>
+      </div>
+
+      <div class="spacer"></div>
+
+      <!-- Actions -->
+      <div class="actions-section">
+        <select class="model-select" id="modelSelect">
+          <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
+          <option value="mimo-v2.5">mimo-v2.5</option>
+          <option value="mimo-v2-omni">mimo-v2-omni</option>
+          <option value="mimo-v2-pro">mimo-v2-pro</option>
+        </select>
+        <button class="run-btn" id="runBtn" onclick="runJudge()">运行 Judge ↵</button>
+        <button class="run-all-btn" id="runAllBtn" onclick="runAll()">批量运行未 Judge 的 [R]</button>
+        <div class="nav-btns">
+          <button onclick="navigate(-1)">←</button>
+          <button onclick="navigate(1)">→</button>
+        </div>
+        <div class="hint" style="margin-top:10px">
+          ←/→ 切换 · Enter 运行 Judge · R 批量运行
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let traces = [];
+let currentIndex = 0;
+let running = false;
+
+async function init() {
+  const resp = await fetch('/api/traces');
+  traces = await resp.json();
+  renderStrip();
+  renderDetail(0);
+  renderSidebar(0);
+  updateValidationStats();
+}
+
+// ── Color helpers ────────────────────────────────────────
+
+function labelMid(label) {
+  return label === 'pass' ? 'var(--pass-mid)'
+       : label === 'fail' ? 'var(--fail-mid)'
+       : label === 'skip' ? 'var(--skip-mid)'
+       : 'var(--none-mid)';
+}
+function labelBorder(label) {
+  return label === 'pass' ? 'var(--pass-border)'
+       : label === 'fail' ? 'var(--fail-border)'
+       : label === 'skip' ? 'var(--skip-border)'
+       : 'var(--none-border)';
+}
+
+// ── Strip ──────────────────────────────────────────────
+
+function renderStrip() {
+  const strip = document.getElementById('strip');
+  strip.innerHTML = '';
+  traces.forEach((entry, i) => {
+    const hl = entry.human_annotation?.label;
+    const jl = entry.judge_result?.label;
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (i === currentIndex ? ' current' : '');
+    chip.textContent = entry.trace.id;
+    chip.style.setProperty('--chip-l', labelMid(hl));
+    chip.style.setProperty('--chip-r', labelMid(jl));
+    chip.style.borderColor = labelBorder(hl || jl);
+    chip.onclick = () => goto(i);
+    chip.title = `人工: ${hl || '未标注'} / Judge: ${jl || '未运行'}`;
+    strip.appendChild(chip);
+  });
+}
+
+// ── Agreement badge ────────────────────────────────────
+
+function updateValidationStats() {
+  const el = document.getElementById('validationStats');
+  const judged = traces.filter(e => e.judge_result && e.human_annotation);
+  const total = traces.length;
+  const run = traces.filter(e => e.judge_result).length;
+
+  if (judged.length === 0) {
+    el.innerHTML = `<div class="validation-stats"><span class="stat-pending">已运行 ${run}/${total} — 运行 Judge 后显示 Stage 5 验证指标</span></div>`;
+    return;
+  }
+
+  let tp = 0, fp = 0, fn = 0, tn = 0;
+  judged.forEach(e => {
+    const j = e.judge_result.label, h = e.human_annotation.label;
+    if (j === 'fail' && h === 'fail') tp++;
+    else if (j === 'fail' && h === 'pass') fp++;
+    else if (j === 'pass' && h === 'fail') fn++;
+    else tn++;
+  });
+
+  const precision = (tp + fp) > 0 ? tp / (tp + fp) : 0;
+  const recall    = (tp + fn) > 0 ? tp / (tp + fn) : 0;
+  const f1        = (precision + recall) > 0 ? 2 * precision * recall / (precision + recall) : 0;
+  const pct = v => Math.round(v * 100);
+  const f1cls = f1 >= 0.7 ? 'f1-good' : f1 >= 0.5 ? 'f1-ok' : 'f1-bad';
+
+  el.innerHTML = `<div class="validation-stats">
+    <div class="stat-group">
+      <span class="stat-label">运行</span>
+      <span class="stat-val">${run}/${total}</span>
+    </div>
+    <div class="stat-group">
+      <span class="stat-label">TP</span><span class="stat-val tp">${tp}</span>
+      <span class="stat-label">TN</span><span class="stat-val tn">${tn}</span>
+      <span class="stat-label">FP</span><span class="stat-val fp">${fp}</span>
+      <span class="stat-label">FN</span><span class="stat-val fn">${fn}</span>
+    </div>
+    <div class="stat-group">
+      <span class="stat-label">Precision</span><span class="stat-val">${pct(precision)}%</span>
+    </div>
+    <div class="stat-group">
+      <span class="stat-label">Recall</span><span class="stat-val">${pct(recall)}%</span>
+    </div>
+    <div class="stat-group">
+      <span class="stat-label">F1</span><span class="stat-val ${f1cls}">${pct(f1)}%</span>
+    </div>
+  </div>`;
+}
+
+// ── Detail panel ───────────────────────────────────────
+
+function renderDetail(idx) {
+  const entry = traces[idx];
+  if (!entry) return;
+  const t = entry.trace;
+  let html = `<div class="trace-id">TRACE · ${t.id}</div>`;
+
+  // Question
+  html += `<div class="panel panel-q"><div class="panel-lbl">问题</div><div class="panel-body">${esc(t.question)}</div></div>`;
+
+  // Complete question (if different)
+  if (t.complete_question && t.complete_question !== t.question) {
+    html += `<details><summary>检索 Query</summary><div class="details-body">${esc(t.complete_question)}</div></details>`;
+  }
+
+  // Context
+  if (t.doc_context) {
+    html += `<details><summary>文档 Context</summary><div class="details-body">${esc(t.doc_context)}</div></details>`;
+  }
+  if (t.faq_context) {
+    html += `<details><summary>FAQ Context</summary><div class="details-body">${esc(t.faq_context)}</div></details>`;
+  }
+
+  // References
+  if (t.references && t.references.length) {
+    html += `<div class="refs">`;
+    t.references.forEach(r => {
+      html += `<a href="${esc(r.url)}" target="_blank">${esc(r.name)}</a>`;
+    });
+    html += `</div>`;
+  }
+
+  // Bot answer
+  html += `<div class="panel panel-a"><div class="panel-lbl">Bot 回复</div><div class="panel-body">${esc(t.actual_answer)}</div></div>`;
+
+  // Expected answer
+  if (entry.expected_answer) {
+    html += `<div class="panel panel-ex"><div class="panel-lbl">参考答案（仅供参考）</div><div class="panel-body">${esc(entry.expected_answer)}</div></div>`;
+  }
+
+  document.getElementById('detail').innerHTML = html;
+}
+
+// ── Sidebar ─────────────────────────────────────────────
+
+function renderSidebar(idx) {
+  const entry = traces[idx];
+  if (!entry) return;
+  renderHuman(entry);
+  renderJudge(entry);
+}
+
+function renderHuman(entry) {
+  const ann = entry.human_annotation;
+  const el = document.getElementById('humanContent');
+  if (!ann) {
+    el.innerHTML = '<span class="muted-msg">未标注</span>';
+    return;
+  }
+  let html = `<div class="verdict-row">`;
+  html += `<span class="verdict-badge ${ann.label}">${ann.label.toUpperCase()}</span>`;
+  if (ann.failure_category) {
+    html += `<span class="failure-cat">${esc(ann.failure_category)}</span>`;
+  }
+  html += `</div>`;
+  if (ann.critique) {
+    const items = ann.critique.split('\n').filter(Boolean);
+    html += `<ul class="critique-list" style="margin-top:8px">`;
+    items.forEach(it => {
+      html += `<li class="critique-item">${esc(it)}</li>`;
+    });
+    html += `</ul>`;
+  }
+  el.innerHTML = html;
+}
+
+function renderJudge(entry) {
+  const jr = entry.judge_result;
+  const el = document.getElementById('judgeContent');
+  if (!jr) {
+    el.innerHTML = '<span class="muted-msg">未运行</span>';
+    return;
+  }
+  const dim = jr.dimensions?.[0];
+  const humanLabel = entry.human_annotation?.label;
+  const agree = humanLabel ? jr.label === humanLabel : null;
+
+  let html = `<div class="verdict-row">`;
+  html += `<span class="verdict-badge ${jr.label}">${jr.label.toUpperCase()}</span>`;
+  if (agree !== null) {
+    html += `<span class="agree-chip ${agree ? 'agree' : 'disagree'}">${agree ? '✓ 与人工一致' : '✗ 与人工不一致'}</span>`;
+  }
+  html += `</div>`;
+
+  const dims = jr.dimensions || [];
+  dims.forEach(d => {
+    html += `<div class="dim-block">`;
+    html += `<div class="dim-header">`;
+    html += `<span class="dim-name">${esc(d.dimension)}</span>`;
+    html += `<span class="verdict-badge ${d.label}" style="font-size:11px;padding:1px 7px">${d.label.toUpperCase()}</span>`;
+    html += `<span class="dim-model">${esc(d.model)}</span>`;
+    html += `</div>`;
+    if (d.critique) {
+      html += `<div class="judge-critique">${esc(d.critique)}</div>`;
+    }
+    if (d.evidence && d.evidence.length) {
+      html += `<ul class="evidence-list">`;
+      d.evidence.forEach(e => { html += `<li class="evidence-item">${esc(e)}</li>`; });
+      html += `</ul>`;
+    }
+    html += `</div>`;
+  });
+  el.innerHTML = html;
+}
+
+// ── Run judge ─────────────────────────────────────────
+
+async function runJudge() {
+  if (running) return;
+  const entry = traces[currentIndex];
+  const model = document.getElementById('modelSelect').value;
+
+  setRunning(true);
+  document.getElementById('judgeContent').innerHTML =
+    `<span class="loading-msg"><span class="spinner"></span>Judge 运行中…</span>`;
+
+  try {
+    const resp = await fetch('/api/judge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trace_id: entry.trace.id, model }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const result = await resp.json();
+    traces[currentIndex].judge_result = result;
+    renderJudge(traces[currentIndex]);
+    renderStrip();
+    updateValidationStats();
+    showToast('Judge 完成', 'success');
+  } catch (e) {
+    showToast('运行失败: ' + e.message, 'error');
+    document.getElementById('judgeContent').innerHTML = '<span class="muted-msg">运行失败</span>';
+  } finally {
+    setRunning(false);
+  }
+}
+
+async function runAll() {
+  if (running) return;
+  const pending = traces
+    .map((e, i) => ({ entry: e, i }))
+    .filter(({ entry }) => !entry.judge_result);
+
+  if (pending.length === 0) {
+    showToast('全部已 Judge', 'success');
+    return;
+  }
+
+  const model = document.getElementById('modelSelect').value;
+  setRunning(true);
+  document.getElementById('runAllBtn').textContent = `批量运行中 0/${pending.length}…`;
+
+  for (let n = 0; n < pending.length; n++) {
+    const { entry, i } = pending[n];
+    document.getElementById('runAllBtn').textContent = `批量运行中 ${n + 1}/${pending.length}…`;
+
+    try {
+      const resp = await fetch('/api/judge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trace_id: entry.trace.id, model }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const result = await resp.json();
+      traces[i].judge_result = result;
+      renderStrip();
+      updateValidationStats();
+      if (i === currentIndex) renderJudge(traces[currentIndex]);
+    } catch (e) {
+      showToast(`q_${entry.trace.id} 失败: ${e.message}`, 'error');
+    }
+  }
+
+  setRunning(false);
+  document.getElementById('runAllBtn').textContent = '批量运行未 Judge 的 [R]';
+  showToast(`批量完成: ${pending.length} 条`, 'success');
+}
+
+// ── Navigation ─────────────────────────────────────────
+
+function goto(idx) {
+  currentIndex = idx;
+  renderStrip();
+  renderDetail(idx);
+  renderSidebar(idx);
+}
+
+function navigate(dir) {
+  const next = (currentIndex + dir + traces.length) % traces.length;
+  goto(next);
+}
+
+// ── Helpers ────────────────────────────────────────────
+
+function setRunning(val) {
+  running = val;
+  document.getElementById('runBtn').disabled = val;
+  document.getElementById('runAllBtn').disabled = val;
+}
+
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast show ${type}`;
+  setTimeout(() => { t.className = 'toast'; }, 2800);
+}
+
+// ── Keyboard ───────────────────────────────────────────
+
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); navigate(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); navigate(1); }
+  if (e.key === 'Enter')      { e.preventDefault(); runJudge(); }
+  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); runAll(); }
+});
+
+init();
+</script>
+</body>
+</html>

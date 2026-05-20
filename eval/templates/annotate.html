@@ -3,77 +3,358 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>标注 - Eval Stage 2</title>
+  <title>Stage 2 — 标注</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; margin: 0 auto; padding: 20px; max-width: 1100px; color: #222; }
-    h1 { font-size: 18px; margin: 0 0 8px; }
-    .progress { color: #666; font-size: 14px; font-weight: normal; margin-left: 12px; }
-    .strip { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0; }
-    .chip { padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; border: 2px solid transparent; user-select: none; }
-    .chip[data-status="unannotated"] { background: #e5e5e5; color: #555; }
-    .chip[data-status="pass"] { background: #d4f4dd; color: #1a6d2f; }
-    .chip[data-status="fail"] { background: #fbd5d5; color: #8a1d1d; }
-    .chip[data-status="skip"] { background: #fdebc8; color: #7a5a14; }
-    .chip.current { border-color: #2563eb; }
-    .panel { margin-bottom: 12px; border-radius: 4px; padding: 10px 14px; border-left: 4px solid; background: #fafafa; }
-    .panel.question { border-left-color: #2563eb; }
-    .panel.answer { border-left-color: #16a34a; background: #f0faf3; }
-    .panel.expected { border-left-color: #999; background: #f5f5f5; color: #555; font-size: 14px; }
-    .panel .body { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; font-size: 14px; }
-    details { margin-bottom: 10px; }
-    details summary { cursor: pointer; padding: 6px 0; color: #555; font-size: 13px; }
-    details > div { padding: 8px 12px; border-left: 3px solid #eee; background: #fafafa; white-space: pre-wrap; word-break: break-word; font-size: 13px; }
-    .refs { font-size: 13px; color: #555; margin: 8px 0; }
-    .refs a { color: #2563eb; text-decoration: none; margin-right: 12px; }
-    .form { margin-top: 16px; padding: 14px; background: #f9f9f9; border-radius: 6px; }
-    .labels { display: flex; gap: 10px; margin-bottom: 12px; }
-    .labels button { flex: 1; padding: 12px; font-size: 16px; border: 2px solid #ddd; background: white; cursor: pointer; border-radius: 4px; }
-    .labels button.selected[data-label="pass"] { background: #16a34a; color: white; border-color: #16a34a; }
-    .labels button.selected[data-label="fail"] { background: #dc2626; color: white; border-color: #dc2626; }
-    .labels button.selected[data-label="skip"] { background: #eab308; color: white; border-color: #eab308; }
-    .fail-section { display: none; margin-bottom: 12px; }
-    .fail-section.shown { display: block; }
-    .fail-section textarea { width: 100%; min-height: 60px; padding: 8px; font-family: inherit; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; }
-    .fail-section textarea.error { border-color: #dc2626; }
-    .categories { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
-    .categories label { font-size: 13px; padding: 4px 8px; cursor: pointer; }
-    .actions { display: flex; gap: 8px; }
-    .actions button { padding: 8px 14px; font-size: 14px; border: 1px solid #ddd; background: white; cursor: pointer; border-radius: 4px; }
-    .actions button.primary { background: #2563eb; color: white; border-color: #2563eb; }
-    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 10px 16px; border-radius: 4px; font-size: 14px; display: none; }
+    :root {
+      --bg:          #f4f2ee;
+      --surface:     #ffffff;
+      --surface-2:   #faf9f7;
+      --border:      #e8e3da;
+      --border-soft: #f0ece4;
+      --text:        #1c1a17;
+      --text-2:      #6b6356;
+      --text-3:      #a8a099;
+
+      --pass:        #16a34a;
+      --pass-light:  #f0fdf4;
+      --pass-mid:    #dcfce7;
+      --pass-border: #86efac;
+
+      --fail:        #dc2626;
+      --fail-light:  #fef2f2;
+      --fail-mid:    #fee2e2;
+      --fail-border: #fca5a5;
+
+      --skip:        #c2690a;
+      --skip-light:  #fff7ed;
+      --skip-mid:    #fed7aa;
+      --skip-border: #fdba74;
+
+      --blue:        #2563eb;
+      --blue-light:  #eff6ff;
+      --blue-border: #bfdbfe;
+
+      --radius:      8px;
+      --sidebar-w:   360px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Layout ──────────────────────────────────────── */
+    .layout { display: grid; grid-template-columns: 1fr var(--sidebar-w); height: 100vh; }
+
+    /* ── Main (left, scrollable) ─────────────────────── */
+    .main {
+      overflow-y: auto;
+      padding: 24px 28px;
+    }
+
+    /* ── Header ──────────────────────────────────────── */
+    .header {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 16px;
+    }
+    .header-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; font-weight: 700; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--text-3);
+    }
+    .progress-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: var(--text-3);
+    }
+
+    /* ── Strip ───────────────────────────────────────── */
+    .strip { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 16px; }
+    .chip {
+      padding: 4px 8px; border-radius: 4px; cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; font-weight: 600; letter-spacing: .05em;
+      border: 1px solid transparent; transition: opacity .12s, transform .08s;
+    }
+    .chip:active { transform: scale(.96); }
+    .chip[data-status="unannotated"] { background: var(--surface); color: var(--text-3); border-color: var(--border); }
+    .chip[data-status="pass"]        { background: var(--pass-mid); color: var(--pass); border-color: var(--pass-border); }
+    .chip[data-status="fail"]        { background: var(--fail-mid); color: var(--fail); border-color: var(--fail-border); }
+    .chip[data-status="skip"]        { background: var(--skip-mid); color: var(--skip); border-color: var(--skip-border); }
+    .chip.current { outline: 2px solid var(--blue); outline-offset: 1px; }
+    .chip:hover { opacity: .75; }
+
+    /* ── Divider ─────────────────────────────────────── */
+    .divider { height: 1px; background: var(--border); margin-bottom: 18px; }
+
+    /* ── Trace meta ──────────────────────────────────── */
+    .trace-id {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; font-weight: 600; letter-spacing: .1em;
+      color: var(--text-3); margin-bottom: 12px;
+    }
+
+    /* ── Panels ──────────────────────────────────────── */
+    .panel {
+      background: var(--surface); border-radius: var(--radius);
+      padding: 14px 16px; margin-bottom: 10px;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    }
+    .panel-q  { border-left: 3px solid var(--blue); }
+    .panel-a  { border-left: 3px solid var(--pass); }
+    .panel-ex { border-left: 3px solid var(--border); opacity: .7; }
+
+    .panel-lbl {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 700; letter-spacing: .14em;
+      text-transform: uppercase; margin-bottom: 8px;
+    }
+    .panel-q  .panel-lbl { color: var(--blue); }
+    .panel-a  .panel-lbl { color: var(--pass); }
+    .panel-ex .panel-lbl { color: var(--text-3); }
+    .panel-body { font-size: 14px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
+    .panel-ex .panel-body { font-size: 13px; color: var(--text-2); }
+
+    /* ── Collapsibles ────────────────────────────────── */
+    details { margin-bottom: 6px; }
+    details summary {
+      cursor: pointer; font-size: 11px; color: var(--text-3);
+      padding: 5px 0; list-style: none;
+      display: flex; align-items: center; gap: 5px; user-select: none;
+    }
+    details summary::before { content: '▶'; font-size: 7px; transition: transform .15s; }
+    details[open] summary::before { transform: rotate(90deg); }
+    details summary::-webkit-details-marker { display: none; }
+    .details-body {
+      background: var(--surface-2); border-radius: 6px; padding: 10px 12px;
+      border: 1px solid var(--border-soft); margin-top: 4px;
+      font-size: 13px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
+      color: var(--text-2);
+    }
+
+    /* ── Refs ────────────────────────────────────────── */
+    .refs { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+    .refs a {
+      font-size: 11px; color: var(--blue); text-decoration: none;
+      padding: 3px 8px; border-radius: 4px;
+      background: var(--blue-light); border: 1px solid var(--blue-border);
+      transition: opacity .12s;
+    }
+    .refs a:hover { opacity: .7; }
+
+    /* ═══════════════════════════════════════════════════
+       SIDEBAR
+    ═══════════════════════════════════════════════════ */
+    .sidebar {
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      overflow-y: auto;
+    }
+
+    #form { display: flex; flex-direction: column; height: 100%; padding: 20px 18px; gap: 14px; }
+
+    /* ── Label buttons ───────────────────────────────── */
+    .labels-section {}
+    .section-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 700; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--text-3); margin-bottom: 8px;
+    }
+    .labels { display: flex; gap: 6px; }
+    .labels button {
+      flex: 1; height: 54px;
+      font-size: 13px; font-weight: 700; letter-spacing: .03em;
+      border: 2px solid var(--border); background: var(--surface-2);
+      cursor: pointer; border-radius: var(--radius); color: var(--text-2);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      transition: all .14s;
+      box-shadow: 0 1px 2px rgba(0,0,0,.06);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    }
+    .labels button .key-hint {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 400; opacity: .5;
+    }
+    .labels button:hover { background: var(--bg); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.09); }
+    .labels button:active { transform: translateY(0); }
+
+    .labels button.selected[data-label="pass"] {
+      background: var(--pass); color: #fff; border-color: var(--pass);
+      box-shadow: 0 4px 14px rgba(22,163,74,.35);
+    }
+    .labels button.selected[data-label="fail"] {
+      background: var(--fail); color: #fff; border-color: var(--fail);
+      box-shadow: 0 4px 14px rgba(220,38,38,.30);
+    }
+    .labels button.selected[data-label="skip"] {
+      background: var(--skip); color: #fff; border-color: var(--skip);
+      box-shadow: 0 4px 14px rgba(194,105,10,.28);
+    }
+    .labels button.selected .key-hint { opacity: .65; }
+
+    /* ── Note list ───────────────────────────────────── */
+    .note-section { flex-shrink: 0; }
+    .note-label { font-size: 12px; font-weight: 600; color: var(--text-2); display: block; margin-bottom: 7px; }
+    .note-list { list-style: none; padding: 0; margin: 0 0 6px; }
+    .note-item { display: flex; gap: 5px; margin-bottom: 5px; }
+    .note-item-input {
+      flex: 1; padding: 8px 10px;
+      font-size: 13px; background: var(--surface-2); border: 1.5px solid var(--border);
+      border-radius: 6px; color: var(--text); outline: none; transition: border-color .12s;
+      font-family: inherit;
+    }
+    .note-item-input::placeholder { color: var(--text-3); }
+    .note-item-input:focus { border-color: var(--blue); background: #fff; }
+    .note-item-input.error { border-color: var(--fail); background: var(--fail-light); }
+    .note-del {
+      padding: 0 9px; background: none; border: 1.5px solid var(--border);
+      border-radius: 6px; cursor: pointer; color: var(--text-3); font-size: 13px;
+      transition: all .12s;
+    }
+    .note-del:hover { background: var(--fail-light); border-color: var(--fail-border); color: var(--fail); }
+    .note-add {
+      font-size: 12px; padding: 6px 10px; border: 1.5px dashed var(--border);
+      background: none; cursor: pointer; border-radius: 6px; color: var(--text-3);
+      font-family: inherit; transition: all .12s; width: 100%; text-align: left;
+    }
+    .note-add:hover { background: var(--surface-2); color: var(--text-2); border-color: var(--text-3); }
+
+    /* ── Categories ──────────────────────────────────── */
+    .categories-section { display: none; flex-shrink: 0; }
+    .categories-section.shown { display: block; }
+    .categories { display: flex; flex-direction: column; gap: 3px; }
+    .categories label {
+      font-size: 12px; padding: 8px 10px; cursor: pointer; border-radius: 6px;
+      border: 1.5px solid var(--border); background: var(--surface-2);
+      color: var(--text-2); display: flex; align-items: center; gap: 8px;
+      transition: all .12s;
+    }
+    .categories label:hover { background: var(--fail-light); border-color: var(--fail-border); }
+    .categories label:has(input:checked) {
+      background: var(--fail-mid); border-color: var(--fail-border); color: var(--fail);
+      font-weight: 600;
+    }
+    .categories input[type="radio"] { accent-color: var(--fail); flex-shrink: 0; }
+
+    /* ── Spacer ──────────────────────────────────────── */
+    .spacer { flex: 1; }
+
+    /* ── Actions ─────────────────────────────────────── */
+    .actions-section { border-top: 1px solid var(--border-soft); padding-top: 14px; }
+    .save-btn {
+      width: 100%; padding: 14px; font-size: 14px; font-weight: 700;
+      background: var(--blue); color: #fff; border: none;
+      border-radius: var(--radius); cursor: pointer; font-family: inherit;
+      box-shadow: 0 3px 10px rgba(37,99,235,.30);
+      transition: all .14s; margin-bottom: 8px; letter-spacing: .01em;
+    }
+    .save-btn:hover { background: #1d4ed8; box-shadow: 0 5px 16px rgba(37,99,235,.38); transform: translateY(-1px); }
+    .save-btn:active { transform: translateY(0); }
+    .nav-btns { display: flex; gap: 6px; }
+    .nav-btns button {
+      flex: 1; padding: 9px; font-size: 16px;
+      border: 1.5px solid var(--border); background: var(--surface-2);
+      cursor: pointer; border-radius: var(--radius); color: var(--text-2);
+      transition: all .12s;
+    }
+    .nav-btns button:hover { background: var(--bg); }
+
+    /* ── Hint ────────────────────────────────────────── */
+    .hint {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; color: var(--text-3); letter-spacing: .03em; line-height: 1.8;
+    }
+
+    /* ── Toast ───────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      padding: 9px 16px; border-radius: 8px; font-size: 13px;
+      display: none; z-index: 100; border: 1px solid;
+      box-shadow: 0 4px 16px rgba(0,0,0,.12);
+      font-family: 'JetBrains Mono', monospace;
+    }
     .toast.show { display: block; }
-    .toast.error { background: #fbd5d5; color: #8a1d1d; }
-    .toast.success { background: #d4f4dd; color: #1a6d2f; }
-    .hint { font-size: 12px; color: #888; margin-top: 8px; }
+    .toast.error   { background: var(--fail-light);  color: var(--fail);  border-color: var(--fail-border); }
+    .toast.success { background: var(--pass-light); color: var(--pass); border-color: var(--pass-border); }
   </style>
 </head>
 <body>
-  <h1>Eval 标注 <span class="progress" id="progress"></span></h1>
-  <div class="strip" id="strip"></div>
-  <div id="detail">加载中...</div>
-  <div class="form" id="form" style="display:none">
-    <div class="labels">
-      <button data-label="pass" onclick="selectLabel('pass')">Pass (1)</button>
-      <button data-label="fail" onclick="selectLabel('fail')">Fail (2)</button>
-      <button data-label="skip" onclick="selectLabel('skip')">Skip (3)</button>
+  <div class="layout">
+
+    <!-- ── Left: trace content ─────────────────────── -->
+    <div class="main">
+      <div class="header">
+        <span class="header-label">Eval · Stage 2</span>
+        <span class="progress-badge" id="progress"></span>
+      </div>
+      <div class="strip" id="strip"></div>
+      <div class="divider"></div>
+      <div id="detail">加载中...</div>
     </div>
-    <div class="fail-section" id="failSection">
-      <label>失败原因（一句话）：</label>
-      <textarea id="critique" placeholder="为什么 fail？"></textarea>
-      <div class="categories" id="categories"></div>
+
+    <!-- ── Right: annotation form ─────────────────── -->
+    <div class="sidebar">
+      <div id="form" style="display:none">
+
+        <div class="labels-section">
+          <div class="section-title">标注结果</div>
+          <div class="labels">
+            <button data-label="pass" onclick="selectLabel('pass')">
+              Pass
+              <span class="key-hint">[ 1 ]</span>
+            </button>
+            <button data-label="fail" onclick="selectLabel('fail')">
+              Fail
+              <span class="key-hint">[ 2 ]</span>
+            </button>
+            <button data-label="skip" onclick="selectLabel('skip')">
+              Skip
+              <span class="key-hint">[ 3 ]</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="note-section" id="noteSection">
+          <label class="note-label" id="noteLabel">备注（可选）：</label>
+          <ul class="note-list" id="noteList"></ul>
+          <button type="button" class="note-add" onclick="addNoteItem()">＋ 添加一条</button>
+        </div>
+
+        <div class="categories-section" id="categoriesSection">
+          <div class="section-title" style="margin-bottom:7px">失败类型</div>
+          <div class="categories" id="categories"></div>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div class="actions-section">
+          <button class="save-btn" onclick="save()">保存标注 ↵</button>
+          <div class="nav-btns">
+            <button onclick="navigate(-1)" title="上一条">←</button>
+            <button onclick="navigate(1)"  title="下一条">→</button>
+          </div>
+          <div class="hint" style="margin-top:10px">
+            1 Pass · 2 Fail · 3 Skip · ← → 切换<br>
+            Enter 保存 · 备注框 Enter 新增行<br>
+            Ctrl+Enter 保存 · Backspace(空行) 删行
+          </div>
+        </div>
+
+      </div>
     </div>
-    <div class="actions">
-      <button class="primary" onclick="save()">保存 (Enter)</button>
-      <button onclick="navigate(-1)">上一条 (←)</button>
-      <button onclick="navigate(1)">下一条 (→)</button>
-    </div>
-    <div class="hint">快捷键：1=Pass 2=Fail 3=Skip ←/→ 切换条 Enter 保存（critique 框内 Ctrl+Enter 保存）</div>
   </div>
+
   <div class="toast" id="toast"></div>
 
 <script>
-// Categories are embedded by Jinja so the frontend never drifts from backend _CATEGORIES.
 const FAILURE_CATEGORIES = {{ categories | tojson }};
 let traces = [];
 let currentIndex = 0;
@@ -116,7 +397,7 @@ function render() {
   renderStrip();
   renderDetail();
   renderForm();
-  document.getElementById('form').style.display = 'block';
+  document.getElementById('form').style.display = 'flex';
 }
 
 function renderStrip() {
@@ -134,37 +415,39 @@ function renderStrip() {
     chip.onclick = () => { currentIndex = i; render(); };
     strip.appendChild(chip);
   });
-  document.getElementById('progress').textContent = `${done}/${traces.length} 已完成`;
+  document.getElementById('progress').textContent = `${done} / ${traces.length} 已完成`;
 }
 
 function renderDetail() {
   const entry = traces[currentIndex];
   const t = entry.trace;
-  let html = `<div class="panel question"><strong>问题</strong><div class="body">${escapeHtml(t.question)}</div></div>`;
+  let html = `<div class="trace-id">${escapeHtml(t.id)}</div>`;
+  html += `<div class="panel panel-q"><div class="panel-lbl">问题</div><div class="panel-body">${escapeHtml(t.question)}</div></div>`;
+
   if (t.complete_question && t.complete_question !== t.question) {
-    html += `<details><summary>检索 query</summary><div>${escapeHtml(t.complete_question)}</div></details>`;
+    html += `<details><summary>检索 query</summary><div class="details-body">${escapeHtml(t.complete_question)}</div></details>`;
   }
   if (t.conversation_history && t.conversation_history.length) {
     const histText = t.conversation_history
       .map(turn => `[${turn.role === 'user' ? '用户' : 'Bot'}] ${turn.content}`)
       .join('\n');
-    html += `<details><summary>对话历史（${t.conversation_history.length} 条）</summary><div>${escapeHtml(histText)}</div></details>`;
+    html += `<details><summary>对话历史（${t.conversation_history.length} 条）</summary><div class="details-body">${escapeHtml(histText)}</div></details>`;
   }
   if (t.doc_context) {
-    html += `<details><summary>文档 Context (doc_str)</summary><div>${escapeHtml(t.doc_context)}</div></details>`;
+    html += `<details><summary>文档 Context</summary><div class="details-body">${escapeHtml(t.doc_context)}</div></details>`;
   }
   if (t.faq_context) {
-    html += `<details><summary>FAQ Context (faq_str)</summary><div>${escapeHtml(t.faq_context)}</div></details>`;
+    html += `<details><summary>FAQ Context</summary><div class="details-body">${escapeHtml(t.faq_context)}</div></details>`;
   }
   if (t.references && t.references.length) {
     const refs = t.references
       .map(r => `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">[${escapeHtml(r.doc_id)}] ${escapeHtml(r.name)}</a>`)
       .join('');
-    html += `<div class="refs">引用：${refs}</div>`;
+    html += `<div class="refs">${refs}</div>`;
   }
-  html += `<div class="panel answer"><strong>Bot 实际回复</strong><div class="body">${escapeHtml(t.actual_answer)}</div></div>`;
+  html += `<div class="panel panel-a"><div class="panel-lbl">Bot 回复</div><div class="panel-body">${escapeHtml(t.actual_answer)}</div></div>`;
   if (entry.expected_answer) {
-    html += `<div class="panel expected"><strong>参考答案</strong>（仅供参考，不参与评分）<div class="body">${escapeHtml(entry.expected_answer)}</div></div>`;
+    html += `<div class="panel panel-ex"><div class="panel-lbl">参考答案（仅供参考）</div><div class="panel-body">${escapeHtml(entry.expected_answer)}</div></div>`;
   }
   document.getElementById('detail').innerHTML = html;
 }
@@ -177,24 +460,72 @@ function renderForm() {
   if (currentLabel) {
     document.querySelector(`.labels button[data-label="${currentLabel}"]`).classList.add('selected');
   }
-  document.getElementById('critique').value = ann && ann.label === 'fail' ? ann.critique : '';
-  document.getElementById('critique').classList.remove('error');
+  const savedCritique = ann ? (ann.critique || '') : '';
+  setNoteItems(savedCritique);
   document.querySelectorAll('input[name="failure_category"]').forEach(r => r.checked = false);
   if (ann && ann.label === 'fail' && ann.failure_category) {
     const el = document.querySelector(`input[name="failure_category"][value="${ann.failure_category}"]`);
     if (el) el.checked = true;
   }
-  document.getElementById('failSection').classList.toggle('shown', currentLabel === 'fail');
+  updateNoteSection();
 }
 
 function selectLabel(label) {
   currentLabel = label;
   document.querySelectorAll('.labels button').forEach(b => b.classList.remove('selected'));
   document.querySelector(`.labels button[data-label="${label}"]`).classList.add('selected');
-  document.getElementById('failSection').classList.toggle('shown', label === 'fail');
+  updateNoteSection();
   if (label === 'fail') {
-    setTimeout(() => document.getElementById('critique').focus(), 0);
+    const inputs = document.querySelectorAll('.note-item-input');
+    if (inputs.length) setTimeout(() => inputs[0].focus(), 0);
   }
+}
+
+function updateNoteSection() {
+  const isFailLabel = currentLabel === 'fail';
+  document.getElementById('noteLabel').textContent = isFailLabel ? '失败原因（至少一条）：' : '备注（可选）：';
+  document.getElementById('categoriesSection').classList.toggle('shown', isFailLabel);
+  if (isFailLabel && document.querySelectorAll('.note-item').length === 0) {
+    addNoteItemWithValue('');
+  }
+}
+
+function setNoteItems(text) {
+  const list = document.getElementById('noteList');
+  list.innerHTML = '';
+  const items = text ? text.split('\n').filter(Boolean) : [];
+  items.forEach(val => addNoteItemWithValue(val));
+}
+
+function getNoteText() {
+  return Array.from(document.querySelectorAll('.note-item-input'))
+    .map(i => i.value.trim()).filter(Boolean).join('\n');
+}
+
+function addNoteItem() {
+  addNoteItemWithValue('');
+  const inputs = document.querySelectorAll('.note-item-input');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+
+function addNoteItemWithValue(val) {
+  const list = document.getElementById('noteList');
+  const li = document.createElement('li');
+  li.className = 'note-item';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'note-item-input';
+  input.value = val;
+  input.placeholder = currentLabel === 'fail' ? '描述一个问题...' : '记录一个观察...';
+  input.addEventListener('keydown', noteInputKeydown);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'note-del';
+  btn.textContent = '×';
+  btn.onclick = () => li.remove();
+  li.appendChild(input);
+  li.appendChild(btn);
+  list.appendChild(li);
 }
 
 function navigate(delta) {
@@ -209,13 +540,13 @@ async function save() {
     showToast('请先选择 Pass/Fail/Skip', 'error');
     return;
   }
-  const critique = document.getElementById('critique').value.trim();
+  const critique = getNoteText();
   const category = document.querySelector('input[name="failure_category"]:checked');
   if (currentLabel === 'fail') {
     if (!critique) {
-      document.getElementById('critique').classList.add('error');
-      document.getElementById('critique').focus();
-      showToast('fail 必须填写 critique', 'error');
+      const firstInput = document.querySelector('.note-item-input');
+      if (firstInput) { firstInput.classList.add('error'); firstInput.focus(); }
+      showToast('fail 必须填写至少一条原因', 'error');
       return;
     }
     if (!category) {
@@ -231,7 +562,7 @@ async function save() {
       body: JSON.stringify({
         trace_id: entry.trace.id,
         label: currentLabel,
-        critique: currentLabel === 'fail' ? critique : '',
+        critique: critique,
         failure_category: currentLabel === 'fail' ? category.value : null,
       }),
     });
@@ -271,16 +602,28 @@ function showToast(msg, kind) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
 }
 
+function noteInputKeydown(e) {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    save();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    addNoteItem();
+  } else if (e.key === 'Backspace' && e.target.value === '') {
+    e.preventDefault();
+    const li = e.target.closest('li');
+    const prev = li.previousElementSibling;
+    li.remove();
+    if (prev) prev.querySelector('.note-item-input').focus();
+  }
+  if (e.target.classList.contains('error')) e.target.classList.remove('error');
+}
+
 document.addEventListener('keydown', e => {
-  const tag = e.target.tagName;
-  if (tag === 'TEXTAREA') {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      save();
-    }
+  if (e.target.tagName === 'INPUT') {
+    if (e.target.classList.contains('note-item-input')) return;
     return;
   }
-  if (tag === 'INPUT') return;
   if (e.key === '1') selectLabel('pass');
   else if (e.key === '2') selectLabel('fail');
   else if (e.key === '3') selectLabel('skip');

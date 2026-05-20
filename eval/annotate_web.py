@@ -59,7 +59,6 @@ def create_app(
             if failure_category not in _CATEGORIES:
                 return jsonify({"error": "fail 必须选择 failure_category"}), 400
         else:
-            critique = ""
             failure_category = None
 
         questions_by_id = {q["id"]: q for q in load_jsonl(app.config["QUESTIONS_PATH"])}

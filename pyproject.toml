@@ -1,7 +1,7 @@
 [project]
 name = "customer-service-chat-bot-eval"
 version = "0.1.0"
-description = "Stage 2 eval dataset pipeline for a customer service chatbot."
+description = "LLM eval flywheel for intelligent_customer RAG chatbot (Stage 1-5 complete)."
 readme = "eval-flywheel-plan.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -11,7 +11,12 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pytest>=8.0.0",
     "flask>=3.0.0",
+    "anthropic>=0.103.1",
+    "openai>=2.37.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "integration: tests that call external APIs (require ANTHROPIC_API_KEY)",
+]
