@@ -118,7 +118,9 @@ DEFAULT_QUESTION_FIELDS = {
 ### 并发保护
 
 新增 `_questions_lock = threading.Lock()`，所有写操作（POST / PUT / DELETE）持锁。  
-与 `_collect_lock` 独立，互不干扰。但 collector 运行期间不阻止问题集编辑（两者操作不同文件）。
+与 `_collect_lock` 独立。
+
+collector 运行期间允许问题集编辑：`workflow_collector` 在启动时一次性打开 `questions_path` 文件句柄并逐行读取。`_save_questions()` 使用原子替换（见下），不会截断原文件 inode，collector 持有的文件描述符始终读到启动时的快照，安全。
 
 ### 文件读写工具函数
 
@@ -127,10 +129,13 @@ def _load_questions(path: Path) -> list[dict]:
     return load_jsonl(path)  # 复用已有函数
 
 def _save_questions(questions: list[dict], path: Path) -> None:
+    """原子写：先写 .tmp，再 replace，避免截断原文件或写入中途崩溃丢数据。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         for q in questions:
             f.write(json.dumps(q, ensure_ascii=False) + "\n")
+    tmp.replace(path)
 ```
 
 ---
@@ -141,7 +146,7 @@ def _save_questions(questions: list[dict], path: Path) -> None:
 
 | 测试 | 验证 |
 |------|------|
-| `test_get_questions_returns_list` | GET /api/questions 返回数组，含 question_id 字段 |
+| `test_get_questions_returns_list` | GET /api/questions 返回数组，每条含 `id` 字段（Question schema 主键） |
 | `test_get_questions_empty_when_no_file` | 文件不存在时返回 [] |
 | `test_post_question_creates_with_auto_id` | 新增后 ID 为 q_003（接续已有 q_001/q_002） |
 | `test_post_question_validates_required_fields` | question/expected_answer 为空时返回 400 |
