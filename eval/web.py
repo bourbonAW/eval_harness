@@ -283,6 +283,7 @@ def create_app(
                 "question": question,
                 "expected_answer": expected_answer,
                 **_DEFAULT_QUESTION_FIELDS,
+                "conversation_history": [],
             }
             questions.append(new_q)
             _save_questions(questions, app.config["QUESTIONS_PATH"])
