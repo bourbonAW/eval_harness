@@ -52,51 +52,48 @@ def _make_client(data_dir, collector_fn=None):
     return app.test_client()
 
 
+def _wait_for_collect_done(client, timeout=5):
+    """Poll /api/collect/status until status leaves 'running'. Returns final body."""
+    import time as _t
+    deadline = _t.monotonic() + timeout
+    while _t.monotonic() < deadline:
+        body = client.get("/api/collect/status").get_json()
+        if body["status"] != "running":
+            return body
+        _t.sleep(0.05)
+    raise AssertionError(f"collect did not complete within {timeout}s")
+
+
 @pytest.fixture
 def mock_collector_success():
-    """2 successes, 0 failures — completes synchronously."""
-    ready = threading.Event()
-
+    """2 successes using schema-valid SAMPLE_TRACES entries, 0 failures."""
     def _collect(questions_path, output_path):
         output_path.write_text(
-            json.dumps({"id": "q_001"}, ensure_ascii=False) + "\n"
-            + json.dumps({"id": "q_002"}, ensure_ascii=False) + "\n",
+            json.dumps(SAMPLE_TRACES[0], ensure_ascii=False) + "\n"
+            + json.dumps(SAMPLE_TRACES[1], ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        ready.set()
         return {"succeeded": 2, "failed": []}
-
-    _collect.ready = ready
     return _collect
 
 
 @pytest.fixture
 def mock_collector_warning():
-    """1 success, 1 failure."""
-    ready = threading.Event()
-
+    """1 success (schema-valid), 1 failure."""
     def _collect(questions_path, output_path):
         output_path.write_text(
-            json.dumps({"id": "q_001"}, ensure_ascii=False) + "\n",
+            json.dumps(SAMPLE_TRACES[0], ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        ready.set()
         return {"succeeded": 1, "failed": ["q_002"]}
-
-    _collect.ready = ready
     return _collect
 
 
 @pytest.fixture
 def mock_collector_error():
     """0 successes — all fail, does not write output file."""
-    ready = threading.Event()
-
     def _collect(questions_path, output_path):
-        ready.set()
         return {"succeeded": 0, "failed": ["q_001", "q_002"]}
-
-    _collect.ready = ready
     return _collect
 ```
 
@@ -137,7 +134,7 @@ def test_post_collect_returns_started(data_dir, mock_collector_success):
     resp = c.post("/api/collect")
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "started"
-    mock_collector_success.ready.wait(timeout=5)
+    _wait_for_collect_done(c)  # drain background thread before teardown
 
 
 def test_post_collect_returns_409_when_running(data_dir):
@@ -159,9 +156,7 @@ def test_post_collect_returns_409_when_running(data_dir):
 def test_post_collect_success_state(data_dir, mock_collector_success):
     c = _make_client(data_dir, mock_collector_success)
     c.post("/api/collect")
-    mock_collector_success.ready.wait(timeout=5)
-    time.sleep(0.05)   # let thread write final state under lock
-    body = c.get("/api/collect/status").get_json()
+    body = _wait_for_collect_done(c)
     assert body["status"] == "success"
     assert body["succeeded"] == 2
     assert body["failed"] == []
@@ -171,9 +166,7 @@ def test_post_collect_success_state(data_dir, mock_collector_success):
 def test_post_collect_warning_state(data_dir, mock_collector_warning):
     c = _make_client(data_dir, mock_collector_warning)
     c.post("/api/collect")
-    mock_collector_warning.ready.wait(timeout=5)
-    time.sleep(0.05)
-    body = c.get("/api/collect/status").get_json()
+    body = _wait_for_collect_done(c)
     assert body["status"] == "warning"
     assert body["succeeded"] == 1
     assert body["failed"] == ["q_002"]
@@ -186,22 +179,27 @@ def test_post_collect_error_preserves_old_traces(data_dir, mock_collector_error)
 
     c = _make_client(data_dir, mock_collector_error)
     c.post("/api/collect")
-    mock_collector_error.ready.wait(timeout=5)
-    time.sleep(0.05)
-
-    body = c.get("/api/collect/status").get_json()
+    body = _wait_for_collect_done(c)
     assert body["status"] == "error"
     assert body["succeeded"] == 0
+    assert body["failed"] == ["q_001", "q_002"]
     assert (data_dir / "traces.jsonl").read_text(encoding="utf-8") == original
 
 
 def test_collect_info_updates_after_collection(data_dir, mock_collector_success):
     c = _make_client(data_dir, mock_collector_success)
     c.post("/api/collect")
-    mock_collector_success.ready.wait(timeout=5)
-    time.sleep(0.05)
+    _wait_for_collect_done(c)
     body = c.get("/api/collect/info").get_json()
     assert body["trace_count"] == 2   # mock wrote 2 traces
+
+
+def test_collect_traces_readable_by_api_traces(data_dir, mock_collector_success):
+    """After collection, /api/traces must return 200 — flywheel handoff check."""
+    c = _make_client(data_dir, mock_collector_success)
+    c.post("/api/collect")
+    _wait_for_collect_done(c)
+    assert c.get("/api/traces").status_code == 200
 ```
 
 - [ ] **Step 4: Run tests to verify RED**
@@ -329,7 +327,12 @@ Immediately after the `app.config["ANNOTATOR"] = annotator` line, add:
     def get_collect_info():
         q_count = sum(1 for _ in load_jsonl(app.config["QUESTIONS_PATH"]))
         t_count = sum(1 for _ in load_jsonl(app.config["TRACES_PATH"]))
-        return jsonify({"question_count": q_count, "trace_count": t_count})
+        return jsonify({
+            "question_count": q_count,
+            "trace_count": t_count,
+            "questions_path": str(app.config["QUESTIONS_PATH"]),
+            "traces_path": str(app.config["TRACES_PATH"]),
+        })
 
     @app.post("/api/collect")
     def post_collect():
@@ -537,9 +540,9 @@ git commit -m "feat: add collect backend — POST /api/collect, GET /api/collect
 
   <div class="path-row">
     <span class="path-badge">输入</span>
-    <span>data/questions.jsonl</span>
+    <span id="questionsPath">…</span>
     <span class="path-arrow">→</span>
-    <span>data/traces.jsonl</span>
+    <span id="tracesPath">…</span>
     <span class="path-badge" style="margin-left:auto">输出</span>
   </div>
 
@@ -555,12 +558,12 @@ git commit -m "feat: add collect backend — POST /api/collect, GET /api/collect
   <div class="stat-card">
     <div class="stat-label">问题数</div>
     <div class="stat-val" id="questionCount">—</div>
-    <div class="stat-sub">data/questions.jsonl</div>
+    <div class="stat-sub" id="questionsPathSub">…</div>
   </div>
   <div class="stat-card">
     <div class="stat-label">已有 Traces</div>
     <div class="stat-val" id="traceCount">—</div>
-    <div class="stat-sub">data/traces.jsonl</div>
+    <div class="stat-sub" id="tracesPathSub">…</div>
   </div>
 </aside>
 
@@ -573,6 +576,10 @@ git commit -m "feat: add collect backend — POST /api/collect, GET /api/collect
 <script>
   let pollTimer = null;
 
+  function escHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
   async function init() {
     const s = await fetch('/api/collect/status').then(r => r.json());
     renderState(s);
@@ -582,7 +589,12 @@ git commit -m "feat: add collect backend — POST /api/collect, GET /api/collect
 
   async function startCollect() {
     const resp = await fetch('/api/collect', { method: 'POST' });
-    if (resp.status === 409) return;
+    if (resp.status === 409) {
+      const s = await fetch('/api/collect/status').then(r => r.json());
+      renderState(s);
+      if (s.status === 'running') startPolling();
+      return;
+    }
     renderState({ status: 'running' });
     startPolling();
   }
@@ -602,8 +614,12 @@ git commit -m "feat: add collect backend — POST /api/collect, GET /api/collect
 
   async function refreshInfo() {
     const info = await fetch('/api/collect/info').then(r => r.json());
-    document.getElementById('questionCount').textContent = info.question_count;
-    document.getElementById('traceCount').textContent    = info.trace_count;
+    document.getElementById('questionCount').textContent  = info.question_count;
+    document.getElementById('traceCount').textContent     = info.trace_count;
+    document.getElementById('questionsPath').textContent  = info.questions_path;
+    document.getElementById('tracesPath').textContent     = info.traces_path;
+    document.getElementById('questionsPathSub').textContent = info.questions_path;
+    document.getElementById('tracesPathSub').textContent    = info.traces_path;
   }
 
   function renderState(s) {
@@ -615,30 +631,35 @@ git commit -m "feat: add collect backend — POST /api/collect, GET /api/collect
 
     switch (s.status) {
       case 'idle':
-        btn.innerHTML   = '▶  开始采集';
+        btn.innerHTML    = '▶  开始采集';
         area.textContent = '等待触发…';
         break;
       case 'running':
-        btn.innerHTML   = '<div class="spinner"></div>正在采集…';
-        btn.disabled    = true;
+        btn.innerHTML    = '<div class="spinner"></div>正在采集…';
+        btn.disabled     = true;
         area.textContent = '采集中，请稍候（约 1–3 分钟）';
         break;
       case 'success':
-        btn.className   = 'collect-btn done-success';
-        btn.innerHTML   = '✓  采集完成';
+        btn.className    = 'collect-btn done-success';
+        btn.innerHTML    = '✓  采集完成';
         area.textContent = s.message + (s.elapsed_s ? ` · 耗时 ${s.elapsed_s}s` : '');
         break;
       case 'warning':
-        btn.className  = 'collect-btn done-warning';
-        btn.innerHTML  = '⚠  部分完成';
-        area.innerHTML = s.message
+        btn.className   = 'collect-btn done-warning';
+        btn.innerHTML   = '⚠  部分完成';
+        area.innerHTML  = escHtml(s.message)
           + (s.failed && s.failed.length
-              ? '<br><span style="opacity:.7;font-size:10px">失败：' + s.failed.join(', ') + '</span>'
+              ? '<br><span style="opacity:.7;font-size:10px">失败：'
+                + s.failed.map(escHtml).join(', ') + '</span>'
               : '');
         break;
       case 'error':
-        btn.innerHTML   = '▶  重新采集';
-        area.textContent = s.message;
+        btn.innerHTML  = '▶  重新采集';
+        area.innerHTML = escHtml(s.message)
+          + (s.failed && s.failed.length
+              ? '<br><span style="opacity:.7;font-size:10px">失败：'
+                + s.failed.map(escHtml).join(', ') + '</span>'
+              : '');
         break;
     }
   }
