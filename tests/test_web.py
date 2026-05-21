@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -134,6 +136,68 @@ def client(data_dir):
     )
     app.testing = True
     return app.test_client()
+
+
+def _make_client(data_dir, collector_fn=None):
+    app = create_app(
+        traces_path=data_dir / "traces.jsonl",
+        questions_path=data_dir / "questions.jsonl",
+        dataset_path=data_dir / "dataset.jsonl",
+        judge_results_path=data_dir / "judge_results.jsonl",
+        annotator="tester",
+        collector_fn=collector_fn,
+    )
+    app.testing = True
+    return app.test_client()
+
+
+def _wait_collect_status(client, expected: str, timeout: float = 5.0) -> dict:
+    deadline = time.monotonic() + timeout
+    last_body = None
+    while time.monotonic() < deadline:
+        last_body = client.get("/api/collect/status").get_json()
+        if last_body["status"] == expected:
+            return last_body
+        time.sleep(0.01)
+    raise AssertionError(f"collect status did not become {expected!r}; last status was {last_body!r}")
+
+
+@pytest.fixture
+def mock_collector_success():
+    ready = threading.Event()
+
+    def _collect(questions_path, output_path):
+        _write_jsonl(output_path, SAMPLE_TRACES)
+        ready.set()
+        return {"succeeded": 2, "failed": []}
+
+    _collect.ready = ready
+    return _collect
+
+
+@pytest.fixture
+def mock_collector_warning():
+    ready = threading.Event()
+
+    def _collect(questions_path, output_path):
+        _write_jsonl(output_path, SAMPLE_TRACES[:1])
+        ready.set()
+        return {"succeeded": 1, "failed": ["q_002"]}
+
+    _collect.ready = ready
+    return _collect
+
+
+@pytest.fixture
+def mock_collector_error():
+    ready = threading.Event()
+
+    def _collect(questions_path, output_path):
+        ready.set()
+        return {"succeeded": 0, "failed": ["q_001", "q_002"]}
+
+    _collect.ready = ready
+    return _collect
 
 
 def test_get_traces_returns_human_annotation_key(client):
@@ -467,3 +531,200 @@ def test_post_judge_respects_model_param(client):
     with patch("eval.web.run_all_judges", side_effect=fake_with_model):
         client.post("/api/judge", json={"trace_id": "q_001", "model": "mimo-v2-omni"})
     assert captured["model"] == "mimo-v2-omni"
+
+
+# ── Collect routes ────────────────────────────────────────
+
+
+def test_get_collect_status_initial_idle(data_dir):
+    c = _make_client(data_dir)
+    body = c.get("/api/collect/status").get_json()
+    assert body["status"] == "idle"
+    assert body["succeeded"] == 0
+    assert body["failed"] == []
+
+
+def test_get_collect_info_returns_counts_and_paths(data_dir):
+    c = _make_client(data_dir)
+    body = c.get("/api/collect/info").get_json()
+    assert body["question_count"] == 2
+    assert body["trace_count"] == 2
+    assert body["questions_path"].endswith("questions.jsonl")
+    assert body["traces_path"].endswith("traces.jsonl")
+
+
+def test_get_collect_page_returns_html(data_dir):
+    c = _make_client(data_dir)
+    resp = c.get("/collect")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/html"
+    html = resp.get_data(as_text=True)
+    assert "Collect" in html
+    assert 'href="/"' in html
+    assert 'href="/judge"' in html
+    assert "s.failed" in html
+
+
+def test_post_collect_returns_started(data_dir, mock_collector_success):
+    c = _make_client(data_dir, mock_collector_success)
+    resp = c.post("/api/collect")
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "started"
+    assert mock_collector_success.ready.wait(timeout=5)
+
+
+def test_post_collect_returns_409_when_running(data_dir):
+    released = threading.Event()
+
+    def _slow_collect(questions_path, output_path):
+        released.wait(timeout=10)
+        return {"succeeded": 0, "failed": []}
+
+    c = _make_client(data_dir, _slow_collect)
+    c.post("/api/collect")
+    resp2 = c.post("/api/collect")
+    assert resp2.status_code == 409
+    released.set()
+
+
+def test_post_collect_success_state(data_dir, mock_collector_success):
+    c = _make_client(data_dir, mock_collector_success)
+    c.post("/api/collect")
+
+    body = _wait_collect_status(c, "success")
+    assert body["succeeded"] == 2
+    assert body["failed"] == []
+    assert _read_jsonl(data_dir / "traces.jsonl") == SAMPLE_TRACES
+    assert not (data_dir / "traces.tmp").exists()
+
+
+def test_post_collect_warning_state(data_dir, mock_collector_warning):
+    c = _make_client(data_dir, mock_collector_warning)
+    c.post("/api/collect")
+
+    body = _wait_collect_status(c, "warning")
+    assert body["succeeded"] == 1
+    assert body["failed"] == ["q_002"]
+    assert _read_jsonl(data_dir / "traces.jsonl") == SAMPLE_TRACES[:1]
+
+
+def test_post_collect_error_preserves_old_traces(data_dir, mock_collector_error):
+    original = json.dumps({"id": "q_old"}, ensure_ascii=False) + "\n"
+    (data_dir / "traces.jsonl").write_text(original, encoding="utf-8")
+
+    c = _make_client(data_dir, mock_collector_error)
+    c.post("/api/collect")
+
+    body = _wait_collect_status(c, "error")
+    assert body["succeeded"] == 0
+    assert body["failed"] == ["q_001", "q_002"]
+    assert (data_dir / "traces.jsonl").read_text(encoding="utf-8") == original
+    assert not (data_dir / "traces.tmp").exists()
+
+
+def test_collect_info_updates_after_collection(data_dir, mock_collector_warning):
+    c = _make_client(data_dir, mock_collector_warning)
+    c.post("/api/collect")
+    _wait_collect_status(c, "warning")
+
+    body = c.get("/api/collect/info").get_json()
+    assert body["trace_count"] == 1
+
+
+def test_get_traces_still_works_after_collection(data_dir, mock_collector_success):
+    c = _make_client(data_dir, mock_collector_success)
+    c.post("/api/collect")
+    _wait_collect_status(c, "success")
+
+    resp = c.get("/api/traces")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert [entry["trace"]["id"] for entry in body] == ["q_001", "q_002"]
+
+
+# ── Questions CRUD routes ─────────────────────────────────
+
+
+def test_get_questions_returns_list(data_dir):
+    c = _make_client(data_dir)
+    body = c.get("/api/questions").get_json()
+    assert isinstance(body, list)
+    assert len(body) == 2
+    assert body[0]["id"] == "q_001"
+    assert "question" in body[0]
+    assert "expected_answer" in body[0]
+
+
+def test_get_questions_empty_when_no_file(tmp_path):
+    app = create_app(
+        traces_path=tmp_path / "traces.jsonl",
+        questions_path=tmp_path / "questions.jsonl",
+        dataset_path=tmp_path / "dataset.jsonl",
+        judge_results_path=tmp_path / "judge_results.jsonl",
+        annotator="tester",
+    )
+    app.testing = True
+    body = app.test_client().get("/api/questions").get_json()
+    assert body == []
+
+
+def test_post_question_creates_with_auto_id(data_dir):
+    c = _make_client(data_dir)
+    resp = c.post("/api/questions", json={"question": "新问题？", "expected_answer": "新回答"})
+    assert resp.status_code == 201
+    body = resp.get_json()
+    assert body["id"] == "q_003"
+    assert body["question"] == "新问题？"
+    assert body["expected_answer"] == "新回答"
+    assert body["knowledge_type"] == "文档"
+    assert body["conversation_history"] == []
+    assert len(c.get("/api/questions").get_json()) == 3
+
+
+def test_post_question_validates_required_fields(data_dir):
+    c = _make_client(data_dir)
+    assert c.post("/api/questions", json={"question": "", "expected_answer": "x"}).status_code == 400
+    assert c.post("/api/questions", json={"question": "x", "expected_answer": "  "}).status_code == 400
+    assert c.post("/api/questions", json={"question": "x"}).status_code == 400
+
+
+def test_put_question_updates_fields(data_dir):
+    c = _make_client(data_dir)
+    resp = c.put("/api/questions/q_001", json={"question": "修改后问题", "expected_answer": "修改后回答"})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["question"] == "修改后问题"
+    assert body["expected_answer"] == "修改后回答"
+    assert body["knowledge_type"] == SAMPLE_QUESTIONS[0]["knowledge_type"]
+    assert body["is_prohibited"] == SAMPLE_QUESTIONS[0]["is_prohibited"]
+
+
+def test_put_question_unknown_id_returns_404(data_dir):
+    c = _make_client(data_dir)
+    resp = c.put("/api/questions/q_999", json={"question": "x", "expected_answer": "y"})
+    assert resp.status_code == 404
+
+
+def test_delete_question_removes_entry(data_dir):
+    c = _make_client(data_dir)
+    resp = c.delete("/api/questions/q_001")
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+    remaining = c.get("/api/questions").get_json()
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == "q_002"
+
+
+def test_delete_question_unknown_id_returns_404(data_dir):
+    c = _make_client(data_dir)
+    assert c.delete("/api/questions/q_999").status_code == 404
+
+
+def test_save_questions_no_tmp_after_success(tmp_path):
+    from eval.web import _save_questions
+    questions = [{"id": "q_001", "question": "q", "expected_answer": "a"}]
+    path = tmp_path / "questions.jsonl"
+    _save_questions(questions, path)
+    assert path.exists()
+    assert not (tmp_path / "questions.tmp").exists()
+    assert _read_jsonl(path) == questions
