@@ -16,9 +16,9 @@ def _load_trace(tid: str) -> dict:
     return {
         t["id"]: t
         for t in [
-            json.loads(l)
-            for l in Path("data/traces.jsonl").read_text().splitlines()
-            if l.strip()
+            json.loads(line)
+            for line in Path("data/traces.jsonl").read_text().splitlines()
+            if line.strip()
         ]
     }[tid]
 

@@ -9,11 +9,20 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, current_app, jsonify, render_template, request
 
 from eval.annotate import _CATEGORIES, _CATEGORY_LABELS, load_jsonl, load_latest_annotations, save_annotation
 from eval.collectors.workflow_collector import collect_all as _collect_all_default
-from eval.judges import run_all_judges
+from eval.judges import (
+    DEFAULT_RUBRIC_PATH,
+    get_default_judge_model,
+    get_default_rubric_suggest_model,
+    load_rubric,
+    run_all_judges,
+)
+
+
+_VALID_DIMENSIONS = {"answer_relevance", "faithfulness"}
 
 
 def load_latest_judge_results(path: Path) -> dict:
@@ -61,12 +70,61 @@ def _save_questions(questions: list[dict], path: Path) -> None:
     tmp.replace(path)
 
 
+def _save_rubric(data: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _mtime_to_iso(mtime: float) -> str:
+    return datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+
+
+def _is_stale_judge_results(rubric_path: Path, judge_results: dict) -> bool:
+    if not rubric_path.exists():
+        return False
+    rubric_iso = _mtime_to_iso(rubric_path.stat().st_mtime)
+    return any((jr.get("judged_at") or "") < rubric_iso for jr in judge_results.values())
+
+
+def _parse_llm_json_object(raw: str) -> dict:
+    text = raw.strip()
+    if not text:
+        raise ValueError("LLM 返回空内容")
+
+    candidates = [text]
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(text[start : end + 1])
+
+    last_error: json.JSONDecodeError | None = None
+    for candidate in dict.fromkeys(candidates):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM 返回 JSON 顶层必须是对象")
+        return parsed
+
+    preview = text[:200].replace("\n", " ")
+    raise ValueError(f"LLM 返回内容不是 JSON 对象: {preview}") from last_error
+
+
 def create_app(
     *,
     traces_path: Path,
     questions_path: Path,
     dataset_path: Path,
     judge_results_path: Path,
+    rubric_path: Path = DEFAULT_RUBRIC_PATH,
     annotator: str = "unknown",
     collector_fn=None,
 ) -> Flask:
@@ -75,6 +133,9 @@ def create_app(
     app.config["QUESTIONS_PATH"] = Path(questions_path)
     app.config["DATASET_PATH"] = Path(dataset_path)
     app.config["JUDGE_RESULTS_PATH"] = Path(judge_results_path)
+    app.config["RUBRIC_PATH"] = Path(rubric_path)
+    app.config["JUDGE_MODEL"] = get_default_judge_model()
+    app.config["RUBRIC_SUGGEST_MODEL"] = get_default_rubric_suggest_model()
     app.config["ANNOTATOR"] = annotator
     _collector = collector_fn if collector_fn is not None else _collect_all_default
     _collect_state: dict = {
@@ -86,6 +147,7 @@ def create_app(
     }
     _collect_lock = threading.Lock()
     _questions_lock = threading.Lock()
+    _rubric_lock = threading.Lock()
 
     def _run_collector() -> None:
         output_path = app.config["TRACES_PATH"]
@@ -140,7 +202,7 @@ def create_app(
 
     @app.get("/judge")
     def index_judge():
-        return render_template("judge.html")
+        return render_template("judge.html", judge_model=app.config["JUDGE_MODEL"])
 
     @app.get("/api/traces")
     def get_traces():
@@ -209,14 +271,14 @@ def create_app(
     def post_judge():
         body = request.get_json(silent=True) or {}
         trace_id = body.get("trace_id")
-        model = body.get("model", "mimo-v2.5-pro")
+        model = str(body.get("model") or app.config["JUDGE_MODEL"]).strip()
 
         traces = load_jsonl(app.config["TRACES_PATH"])
         trace = next((t for t in traces if t["id"] == trace_id), None)
         if trace is None:
             return jsonify({"error": f"trace_id {trace_id} 不存在"}), 404
 
-        eval_result = run_all_judges(trace, model=model)
+        eval_result = run_all_judges(trace, model=model, rubric_path=app.config["RUBRIC_PATH"])
 
         row = {
             "trace_id": eval_result.trace_id,
@@ -226,6 +288,152 @@ def create_app(
         }
         save_judge_result(row, app.config["JUDGE_RESULTS_PATH"])
         return jsonify(row)
+
+    @app.get("/api/rubric/<dimension>")
+    def get_rubric(dimension: str):
+        if dimension not in _VALID_DIMENSIONS:
+            return jsonify({"error": f"unknown dimension: {dimension}"}), 400
+        rubric = load_rubric(dimension, current_app.config["RUBRIC_PATH"])
+        return jsonify({"dimension": dimension, **rubric})
+
+    @app.put("/api/rubric/<dimension>")
+    def put_rubric(dimension: str):
+        if dimension not in _VALID_DIMENSIONS:
+            return jsonify({"error": f"unknown dimension: {dimension}"}), 400
+
+        body = request.get_json(silent=True) or {}
+        system_prompt = (body.get("system_prompt") or "").strip()
+        if not system_prompt:
+            return jsonify({"error": "system_prompt 不能为空"}), 400
+
+        few_shot = body.get("few_shot", [])
+        if not isinstance(few_shot, list):
+            return jsonify({"error": "few_shot 必须是数组"}), 400
+
+        for ex in few_shot:
+            if not isinstance(ex, dict):
+                return jsonify({"error": "few_shot 每项必须是对象"}), 400
+            if ex.get("verdict") not in ("Pass", "Fail"):
+                return jsonify({"error": "verdict 必须是 'Pass' 或 'Fail'（title case）"}), 400
+            if not (ex.get("answer") or "").strip():
+                return jsonify({"error": "few_shot answer 不能为空"}), 400
+            if dimension == "answer_relevance" and not (ex.get("question") or "").strip():
+                return jsonify({"error": "answer_relevance few_shot question 不能为空"}), 400
+
+        rubric_path = current_app.config["RUBRIC_PATH"]
+        with _rubric_lock:
+            try:
+                current = json.loads(rubric_path.read_text(encoding="utf-8"))
+            except Exception:
+                current = {}
+            current[dimension] = {"system_prompt": system_prompt, "few_shot": few_shot}
+            try:
+                _save_rubric(current, rubric_path)
+            except OSError as exc:
+                return jsonify({"error": f"保存失败: {exc}"}), 500
+        return jsonify({"ok": True})
+
+    @app.post("/api/rubric/<dimension>/suggest")
+    def post_rubric_suggest(dimension: str):
+        if dimension not in _VALID_DIMENSIONS:
+            return jsonify({"error": f"unknown dimension: {dimension}"}), 400
+
+        traces_raw = load_jsonl(current_app.config["TRACES_PATH"])
+        traces_by_id = {t["id"]: t for t in traces_raw}
+        dataset = load_jsonl(current_app.config["DATASET_PATH"])
+        human_by_id = {r["id"]: r for r in dataset}
+        judge_results = load_latest_judge_results(current_app.config["JUDGE_RESULTS_PATH"])
+
+        disagreements = []
+        for trace_id, jr in judge_results.items():
+            human = human_by_id.get(trace_id)
+            if not human:
+                continue
+            dim_result = next((d for d in jr.get("dimensions", []) if d.get("dimension") == dimension), None)
+            if not dim_result:
+                continue
+            if dim_result.get("label") != human.get("label"):
+                disagreements.append(
+                    {
+                        "trace_id": trace_id,
+                        "trace": traces_by_id.get(trace_id, {}),
+                        "human_label": human.get("label"),
+                        "human_critique": human.get("critique", ""),
+                        "all_judge_dimensions": jr.get("dimensions", []),
+                        "target_dim_label": dim_result.get("label"),
+                        "target_dim_critique": dim_result.get("critique", ""),
+                    }
+                )
+
+        rubric_path = current_app.config["RUBRIC_PATH"]
+        stale_warning = _is_stale_judge_results(rubric_path, judge_results) if disagreements else False
+        if not disagreements:
+            return jsonify({"fp_fn_count": 0, "stale_warning": stale_warning, "suggestions": []})
+
+        from eval.judges import _call_llm
+
+        rubric = load_rubric(dimension, rubric_path)
+        model = current_app.config["RUBRIC_SUGGEST_MODEL"]
+        system = f"""你是一个 LLM judge 优化专家。
+给定一个 judge 维度的 rubric（system prompt + few-shot 例子）和若干误判案例，
+分析误判原因，提出具体的 rubric 改进建议。
+
+输出严格 JSON：
+{{
+  "suggestions": [
+    {{
+      "type": "system_prompt",
+      "description": "建议描述",
+      "proposed_full": "完整的新 system prompt 文本"
+    }},
+    {{
+      "type": "few_shot",
+      "description": "建议描述",
+      "proposed_example": {{
+        "question": "...",
+        "answer": "...",
+        "verdict": "Pass 或 Fail",
+        "critique": "...",
+        "evidence": ["..."]
+      }}
+    }}
+  ]
+}}
+
+说明：
+- 只输出 JSON 对象本身，不要使用 Markdown 代码块或额外解释文字
+- type=system_prompt 时，proposed_full 是完整的新 system prompt（不是片段替换）
+- type=few_shot 时，proposed_example 是建议新增的例子
+- 只建议真正有价值的改动，无需改动时 suggestions 为空数组
+- 维度：{dimension}
+"""
+        user_content = f"""当前 rubric:
+
+system_prompt:
+{rubric["system_prompt"]}
+
+few_shot 例子:
+{json.dumps(rubric["few_shot"], ensure_ascii=False, indent=2)}
+
+误判案例（共 {len(disagreements)} 条）:
+{json.dumps(disagreements, ensure_ascii=False, indent=2)}
+
+请分析这些误判是否真正属于 {dimension} 维度的问题，并给出改进建议。"""
+
+        try:
+            raw = _call_llm(system, [{"role": "user", "content": user_content}], model=model, max_tokens=2000)
+            result = _parse_llm_json_object(raw)
+            suggestions = result.get("suggestions", [])
+        except Exception as exc:
+            return jsonify({"error": f"LLM 调用失败: {exc}"}), 500
+
+        return jsonify(
+            {
+                "fp_fn_count": len(disagreements),
+                "stale_warning": stale_warning,
+                "suggestions": suggestions,
+            }
+        )
 
     @app.get("/api/collect/status")
     def get_collect_status():
@@ -324,11 +532,13 @@ def create_app(
 def _main() -> None:
     parser = argparse.ArgumentParser(description="Eval Web UI")
     parser.add_argument("--annotator", default="unknown", help="标注者名字（写入 dataset.jsonl）")
+    parser.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1，局域网访问用 0.0.0.0）")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--traces", default="data/traces.jsonl")
     parser.add_argument("--questions", default="data/questions.jsonl")
     parser.add_argument("--dataset", default="data/dataset.jsonl")
     parser.add_argument("--judge-results", default="data/judge_results.jsonl", dest="judge_results")
+    parser.add_argument("--rubric-path", default=str(DEFAULT_RUBRIC_PATH), dest="rubric_path")
     args = parser.parse_args()
 
     app = create_app(
@@ -336,14 +546,16 @@ def _main() -> None:
         questions_path=Path(args.questions),
         dataset_path=Path(args.dataset),
         judge_results_path=Path(args.judge_results),
+        rubric_path=Path(args.rubric_path),
         annotator=args.annotator,
     )
     if args.annotator == "unknown":
         print('WARNING: 未指定 --annotator，新标注的 annotated_by 将记为 "unknown"')
-    print(f"Collect UI:  http://127.0.0.1:{args.port}/collect")
-    print(f"Annotate UI: http://127.0.0.1:{args.port}/")
-    print(f"Judge UI:    http://127.0.0.1:{args.port}/judge")
-    app.run(host="127.0.0.1", port=args.port, debug=False)
+    display_host = "127.0.0.1" if args.host == "0.0.0.0" else args.host
+    print(f"Collect UI:  http://{display_host}:{args.port}/collect")
+    print(f"Annotate UI: http://{display_host}:{args.port}/")
+    print(f"Judge UI:    http://{display_host}:{args.port}/judge")
+    app.run(host=args.host, port=args.port, debug=False)
 
 
 if __name__ == "__main__":

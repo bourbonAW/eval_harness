@@ -283,6 +283,281 @@
     .toast.show  { display: block; }
     .toast.error   { background: var(--fail-light); color: var(--fail); border-color: var(--fail-border); }
     .toast.success { background: var(--pass-light); color: var(--pass); border-color: var(--pass-border); }
+
+    /* ── Rubric editor modal ───────────────────────── */
+    .rubric-btn {
+      margin-left: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 12px;
+      color: var(--text-2);
+      cursor: pointer;
+      transition: all .12s;
+      font-family: inherit;
+    }
+    .rubric-btn:hover { border-color: var(--blue); color: var(--blue); }
+
+    .rubric-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+    }
+    .rubric-overlay.open { display: flex; }
+
+    .rubric-modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      width: min(680px, 96vw);
+      max-height: 86vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 34px rgba(0,0,0,.2);
+      overflow: hidden;
+    }
+    .rubric-modal-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .rubric-modal-title { font-size: 14px; font-weight: 700; flex: 1; }
+    .rubric-dim-select {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 4px 8px;
+      font-size: 12px;
+      color: var(--text-2);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .rubric-close {
+      color: var(--text-3);
+      font-size: 20px;
+      cursor: pointer;
+      line-height: 1;
+      border: none;
+      background: none;
+      padding: 0 2px;
+    }
+    .rubric-close:hover { color: var(--text); }
+
+    .rubric-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+    .rubric-tab {
+      padding: 9px 16px;
+      font-size: 12px;
+      color: var(--text-2);
+      cursor: pointer;
+      border: none;
+      border-bottom: 2px solid transparent;
+      transition: color .12s;
+      background: none;
+      font-family: inherit;
+    }
+    .rubric-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .rubric-tab.ai-tab { color: #6d28d9; }
+    .rubric-tab.ai-tab.active { border-bottom-color: #6d28d9; }
+
+    .rubric-tab-panel { display: none; padding: 14px 16px; overflow-y: auto; flex: 1; min-height: 280px; }
+    .rubric-tab-panel.active { display: block; }
+
+    .rubric-field-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-3);
+      letter-spacing: .06em;
+      margin-bottom: 6px;
+    }
+    .rubric-textarea {
+      width: 100%;
+      min-height: 260px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 12px;
+      color: var(--text);
+      line-height: 1.65;
+      resize: vertical;
+      font-family: inherit;
+      outline: none;
+    }
+    .rubric-textarea:focus { border-color: var(--blue); }
+    .rubric-char-count { font-size: 10px; color: var(--text-3); text-align: right; margin-top: 4px; }
+
+    .rubric-fs-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+    .rubric-fs-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+    .rubric-fs-header { display: flex; align-items: center; gap: 8px; }
+    .rubric-fs-q { font-size: 12px; color: var(--text); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .rubric-fs-critique { font-size: 11px; color: var(--text-2); margin-top: 5px; line-height: 1.45; }
+    .rubric-fs-del {
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-3);
+      cursor: pointer;
+    }
+    .rubric-fs-del:hover { background: var(--fail-light); border-color: var(--fail-border); color: var(--fail); }
+
+    .rubric-add-btn {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      padding: 9px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-3);
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .rubric-add-btn:hover { border-color: var(--blue); color: var(--blue); }
+
+    .rubric-ai-desc { font-size: 12px; color: var(--text-2); line-height: 1.6; margin-bottom: 12px; }
+    .rubric-ai-run-btn {
+      width: 100%;
+      padding: 10px;
+      background: var(--blue);
+      border-radius: 6px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      border: none;
+      margin-bottom: 12px;
+      font-family: inherit;
+    }
+    .rubric-ai-run-btn:disabled { opacity: .55; cursor: not-allowed; }
+    .rubric-stale-banner {
+      background: #fef3c7;
+      border: 1px solid #fbbf24;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: #92400e;
+      margin-bottom: 10px;
+    }
+    .rubric-suggestion {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+    .rubric-suggestion-tag {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 3px;
+      letter-spacing: .05em;
+      margin-right: 6px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .rubric-suggestion-tag.sys { background: #dbeafe; color: #1d4ed8; }
+    .rubric-suggestion-tag.fewshot { background: #eef2ff; color: #4338ca; }
+    .rubric-suggestion-desc { font-size: 12px; color: var(--text); line-height: 1.5; margin-top: 5px; }
+    .rubric-suggestion-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .rubric-adopt-btn,
+    .rubric-reject-btn {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .rubric-adopt-btn { background: var(--pass-light); border: 1px solid var(--pass-border); color: var(--pass); }
+    .rubric-reject-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text-3); }
+    .rubric-suggestion.adopted { opacity: .48; }
+
+    .rubric-modal-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      background: var(--surface-2);
+    }
+    .rubric-cancel-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      font-size: 12px;
+      padding: 6px 14px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .rubric-save-btn {
+      background: var(--blue);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      border: none;
+      font-family: inherit;
+    }
+    .rubric-save-btn.dirty { box-shadow: 0 0 0 3px var(--blue-light); }
+
+    /* Page navigation FAB */
+    .page-nav-fab {
+      position: fixed;
+      bottom: 20px;
+      right: calc(var(--sidebar-w) + 16px);
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 4px;
+      box-shadow: 0 3px 14px rgba(0,0,0,.13);
+      display: flex;
+      gap: 3px;
+      z-index: 50;
+    }
+    .page-nav-fab span,
+    .page-nav-fab a {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 5px;
+      letter-spacing: .04em;
+      text-decoration: none;
+      transition: all .12s;
+    }
+    .page-nav-fab .fab-active {
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 1px 5px rgba(37,99,235,.3);
+    }
+    .page-nav-fab a.fab-link {
+      color: var(--text-2);
+    }
+    .page-nav-fab a.fab-link:hover {
+      background: var(--bg);
+      color: var(--text);
+    }
   </style>
 </head>
 <body>
@@ -292,7 +567,7 @@
   <div class="main">
     <div class="header">
       <span class="header-label">Eval · Stage 4/5 Judge</span>
-      <a href="/" style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-decoration:none;">← 标注 UI</a>
+      <button class="rubric-btn" onclick="openRubric()">✎ 编辑 Rubric</button>
     </div>
     <div class="strip" id="strip"></div>
     <div id="validationStats"></div>
@@ -321,10 +596,13 @@
       <!-- Actions -->
       <div class="actions-section">
         <select class="model-select" id="modelSelect">
-          <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
-          <option value="mimo-v2.5">mimo-v2.5</option>
-          <option value="mimo-v2-omni">mimo-v2-omni</option>
-          <option value="mimo-v2-pro">mimo-v2-pro</option>
+          {% set model_options = ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-pro"] %}
+          {% if judge_model not in model_options %}
+          <option value="{{ judge_model }}" selected>{{ judge_model }}</option>
+          {% endif %}
+          {% for model in model_options %}
+          <option value="{{ model }}" {% if model == judge_model %}selected{% endif %}>{{ model }}</option>
+          {% endfor %}
         </select>
         <button class="run-btn" id="runBtn" onclick="runJudge()">运行 Judge ↵</button>
         <button class="run-all-btn" id="runAllBtn" onclick="runAll()">批量运行未 Judge 的 [R]</button>
@@ -342,6 +620,45 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="rubric-overlay" id="rubricOverlay" onclick="onOverlayClick(event)">
+  <div class="rubric-modal">
+    <div class="rubric-modal-header">
+      <span class="rubric-modal-title">Rubric 编辑器</span>
+      <select class="rubric-dim-select" id="rubricDimSelect" onchange="onDimChange()">
+        <option value="answer_relevance">answer_relevance</option>
+        <option value="faithfulness">faithfulness</option>
+      </select>
+      <button class="rubric-close" onclick="closeRubric()">✕</button>
+    </div>
+    <div class="rubric-tabs">
+      <button class="rubric-tab active" onclick="switchRubricTab(0)">评判标准</button>
+      <button class="rubric-tab" onclick="switchRubricTab(1)">Few-shot 例子</button>
+      <button class="rubric-tab ai-tab" onclick="switchRubricTab(2)">✦ AI 分析</button>
+    </div>
+    <div class="rubric-tab-panel active" id="rubricTab0">
+      <div class="rubric-field-label">SYSTEM PROMPT</div>
+      <textarea class="rubric-textarea" id="rubricPromptTA" oninput="onPromptInput()"></textarea>
+      <div class="rubric-char-count" id="rubricCharCount">0 字符</div>
+    </div>
+    <div class="rubric-tab-panel" id="rubricTab1">
+      <div class="rubric-fs-list" id="rubricFsList"></div>
+      <button class="rubric-add-btn" onclick="openAddFromTraces()">+ 从标注 traces 中添加例子</button>
+    </div>
+    <div class="rubric-tab-panel" id="rubricTab2">
+      <div class="rubric-ai-desc">分析当前维度的 FP/FN 失误案例，自动生成 system prompt 和 few-shot 改进建议。</div>
+      <button class="rubric-ai-run-btn" id="rubricAiBtn" onclick="runSuggest()">✦ 一键分析 FP/FN → 生成改进建议</button>
+      <div id="rubricStaleBanner" class="rubric-stale-banner" style="display:none">
+        部分 judge 结果早于当前 rubric，建议先 Run All 再分析
+      </div>
+      <div id="rubricSuggestions"></div>
+    </div>
+    <div class="rubric-modal-footer">
+      <button class="rubric-cancel-btn" onclick="closeRubric()">取消</button>
+      <button class="rubric-save-btn" id="rubricSaveBtn" onclick="saveRubric()">保存 Rubric</button>
+    </div>
+  </div>
+</div>
 
 <script>
 let traces = [];
@@ -667,9 +984,251 @@ function showToast(msg, type) {
   setTimeout(() => { t.className = 'toast'; }, 2800);
 }
 
+// ── Rubric editor ───────────────────────────────────────
+
+let _rubricDim = 'answer_relevance';
+let _rubricDirty = false;
+let _rubricFewShot = [];
+let _rubricPrompt = '';
+let _suggestions = [];
+
+function setRubricDirty(val) {
+  _rubricDirty = val;
+  document.getElementById('rubricSaveBtn')?.classList.toggle('dirty', val);
+}
+
+function openRubric() {
+  _rubricDim = document.getElementById('rubricDimSelect').value;
+  document.getElementById('rubricOverlay').classList.add('open');
+  switchRubricTab(0);
+  loadRubric(_rubricDim);
+}
+
+function closeRubric() {
+  if (_rubricDirty && !confirm('当前修改未保存，确认关闭？')) return;
+  document.getElementById('rubricOverlay').classList.remove('open');
+  setRubricDirty(false);
+}
+
+function onOverlayClick(e) {
+  if (e.target === document.getElementById('rubricOverlay')) closeRubric();
+}
+
+function switchRubricTab(n) {
+  document.querySelectorAll('.rubric-tab').forEach((t, i) => t.classList.toggle('active', i === n));
+  document.querySelectorAll('.rubric-tab-panel').forEach((p, i) => p.classList.toggle('active', i === n));
+}
+
+function onDimChange() {
+  if (_rubricDirty && !confirm('当前修改未保存，确认切换维度？')) {
+    document.getElementById('rubricDimSelect').value = _rubricDim;
+    return;
+  }
+  _rubricDim = document.getElementById('rubricDimSelect').value;
+  setRubricDirty(false);
+  loadRubric(_rubricDim);
+}
+
+async function loadRubric(dim) {
+  try {
+    const resp = await fetch(`/api/rubric/${dim}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.status);
+    _rubricPrompt = data.system_prompt || '';
+    _rubricFewShot = data.few_shot || [];
+    document.getElementById('rubricPromptTA').value = _rubricPrompt;
+    document.getElementById('rubricCharCount').textContent = `${_rubricPrompt.length} 字符`;
+    renderFewShot();
+    document.getElementById('rubricSuggestions').innerHTML = '';
+    document.getElementById('rubricStaleBanner').style.display = 'none';
+    _suggestions = [];
+    setRubricDirty(false);
+  } catch (e) {
+    showToast('Rubric 加载失败: ' + e.message, 'error');
+  }
+}
+
+function onPromptInput() {
+  _rubricPrompt = document.getElementById('rubricPromptTA').value;
+  document.getElementById('rubricCharCount').textContent = `${_rubricPrompt.length} 字符`;
+  setRubricDirty(true);
+}
+
+function renderFewShot() {
+  const list = document.getElementById('rubricFsList');
+  if (_rubricFewShot.length === 0) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--text-3);text-align:center;padding:12px">暂无 few-shot 例子</div>';
+    return;
+  }
+  list.innerHTML = _rubricFewShot.map((ex, i) => {
+    const vclass = ex.verdict === 'Pass' ? 'pass' : 'fail';
+    const label = ex.question || ex.answer?.slice(0, 48) || '(无标题)';
+    return `<div class="rubric-fs-item">
+      <div class="rubric-fs-header">
+        <span class="verdict-badge ${vclass}" style="font-size:11px;padding:2px 8px">${esc(ex.verdict)}</span>
+        <span class="rubric-fs-q">${esc(label.slice(0, 72))}</span>
+        <button class="rubric-fs-del" onclick="deleteFewShot(${i})">✕</button>
+      </div>
+      ${ex.critique ? `<div class="rubric-fs-critique">${esc(ex.critique.slice(0, 140))}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function deleteFewShot(i) {
+  _rubricFewShot.splice(i, 1);
+  setRubricDirty(true);
+  renderFewShot();
+}
+
+async function openAddFromTraces() {
+  const annotated = traces.filter(e => e.human_annotation && e.human_annotation.label !== 'skip');
+  if (annotated.length === 0) {
+    showToast('没有可用的标注 traces', 'error');
+    return;
+  }
+  const opts = annotated
+    .map((e, i) => `${i}: [${e.human_annotation.label}] ${e.trace.question?.slice(0, 50) || e.trace.id}`)
+    .join('\n');
+  const choice = prompt(`选择要添加的 trace（输入序号）:\n${opts}`);
+  if (choice === null || choice.trim() === '') return;
+  const idx = parseInt(choice, 10);
+  if (Number.isNaN(idx) || idx < 0 || idx >= annotated.length) {
+    showToast('无效选择', 'error');
+    return;
+  }
+
+  const entry = annotated[idx];
+  const ha = entry.human_annotation;
+  const t = entry.trace;
+  const verdict = ha.label === 'pass' ? 'Pass' : 'Fail';
+  const newEx = { verdict, critique: ha.critique || '', evidence: [] };
+  if (_rubricDim === 'answer_relevance') {
+    newEx.question = t.question || '';
+    newEx.answer = t.actual_answer || '';
+  } else {
+    newEx.doc_context = t.doc_context || '';
+    newEx.faq_context = t.faq_context || '';
+    newEx.answer = t.actual_answer || '';
+  }
+
+  _rubricFewShot.push(newEx);
+  setRubricDirty(true);
+  renderFewShot();
+  showToast('已添加 few-shot 例子', 'success');
+}
+
+async function saveRubric() {
+  const payload = { system_prompt: _rubricPrompt, few_shot: _rubricFewShot };
+  try {
+    const resp = await fetch(`/api/rubric/${_rubricDim}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showToast('保存失败: ' + (data.error || resp.status), 'error');
+      return;
+    }
+    setRubricDirty(false);
+    showToast('Rubric 已保存', 'success');
+  } catch (e) {
+    showToast('保存失败: ' + e.message, 'error');
+  }
+}
+
+async function runSuggest() {
+  const btn = document.getElementById('rubricAiBtn');
+  btn.disabled = true;
+  btn.textContent = '分析中…';
+  document.getElementById('rubricSuggestions').innerHTML =
+    '<span style="font-size:12px;color:var(--text-3)">正在分析 FP/FN 案例…</span>';
+
+  try {
+    const resp = await fetch(`/api/rubric/${_rubricDim}/suggest`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.status);
+    document.getElementById('rubricStaleBanner').style.display = data.stale_warning ? '' : 'none';
+    _suggestions = (data.suggestions || []).map(s => ({ ...s, _adopted: false }));
+    if (data.fp_fn_count === 0) {
+      document.getElementById('rubricSuggestions').innerHTML =
+        '<div style="font-size:12px;color:var(--text-2)">当前维度无 FP/FN 失误，judge 表现良好</div>';
+    } else {
+      renderSuggestions(data.fp_fn_count);
+    }
+  } catch (e) {
+    document.getElementById('rubricSuggestions').innerHTML =
+      `<div style="font-size:12px;color:var(--fail)">AI 分析失败: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✦ 一键分析 FP/FN → 生成改进建议';
+  }
+}
+
+function renderSuggestions(fpFnCount) {
+  const el = document.getElementById('rubricSuggestions');
+  if (_suggestions.length === 0) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-2)">无具体建议</div>';
+    return;
+  }
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span style="font-size:12px;color:var(--text-2)">发现 ${fpFnCount} 处 FP/FN，生成 ${_suggestions.length} 条建议</span>
+      <button class="rubric-adopt-btn" onclick="adoptAll()">✓ 全部采纳</button>
+    </div>
+    ${_suggestions.map((s, i) => {
+      const tag = s.type === 'system_prompt' ? 'sys' : 'fewshot';
+      const label = s.type === 'system_prompt' ? 'SYSTEM PROMPT' : 'FEW-SHOT';
+      return `<div class="rubric-suggestion ${s._adopted ? 'adopted' : ''}" id="sug${i}">
+        <div><span class="rubric-suggestion-tag ${tag}">${label}</span></div>
+        <div class="rubric-suggestion-desc">${esc(s.description || '')}</div>
+        <div class="rubric-suggestion-actions">
+          <button class="rubric-adopt-btn" onclick="adoptSuggestion(${i})">✓ 采纳</button>
+          <button class="rubric-reject-btn" onclick="rejectSuggestion(${i})">✕ 忽略</button>
+        </div>
+      </div>`;
+    }).join('')}`;
+}
+
+function adoptSuggestion(i) {
+  const s = _suggestions[i];
+  if (!s || s._adopted) return;
+  if (s.type === 'system_prompt' && s.proposed_full) {
+    _rubricPrompt = s.proposed_full;
+    document.getElementById('rubricPromptTA').value = _rubricPrompt;
+    document.getElementById('rubricCharCount').textContent = `${_rubricPrompt.length} 字符`;
+    switchRubricTab(0);
+  } else if (s.type === 'few_shot' && s.proposed_example) {
+    _rubricFewShot.push(s.proposed_example);
+    renderFewShot();
+    switchRubricTab(1);
+  }
+  s._adopted = true;
+  setRubricDirty(true);
+  document.getElementById(`sug${i}`)?.classList.add('adopted');
+}
+
+function rejectSuggestion(i) {
+  const s = _suggestions[i];
+  if (s) s._adopted = true;
+  document.getElementById(`sug${i}`)?.classList.add('adopted');
+}
+
+function adoptAll() {
+  _suggestions.forEach((_, i) => adoptSuggestion(i));
+}
+
 // ── Keyboard ───────────────────────────────────────────
 
 document.addEventListener('keydown', e => {
+  if (document.getElementById('rubricOverlay')?.classList.contains('open')) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeRubric();
+    }
+    if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) e.preventDefault();
+    return;
+  }
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
   if (e.key === 'ArrowLeft')  { e.preventDefault(); navigate(-1); }
   if (e.key === 'ArrowRight') { e.preventDefault(); navigate(1); }
@@ -679,5 +1238,10 @@ document.addEventListener('keydown', e => {
 
 init();
 </script>
+  <div class="page-nav-fab">
+    <a href="/collect" class="fab-link">← Collect</a>
+    <a href="/" class="fab-link">← 标注</a>
+    <span class="fab-active">Judge</span>
+  </div>
 </body>
 </html>

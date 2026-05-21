@@ -2,6 +2,7 @@
 .env
 __pycache__/
 .pytest_cache/
+.superpowers/
 *.pyc
 # data/questions.jsonl — 人工维护，已提交
 # data/dataset.jsonl   — 人工维护，已提交

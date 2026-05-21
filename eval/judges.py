@@ -2,14 +2,29 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+from copy import deepcopy
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import anthropic
 import openai
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+DEFAULT_RUBRIC_PATH = Path("data/judge_rubric.json")
+DEFAULT_JUDGE_MODEL = "mimo-v2.5-pro"
+
+
+def get_default_judge_model() -> str:
+    return os.environ.get("JUDGE_MODEL", "").strip() or DEFAULT_JUDGE_MODEL
+
+
+def get_default_rubric_suggest_model() -> str:
+    return os.environ.get("RUBRIC_SUGGEST_MODEL", "").strip() or get_default_judge_model()
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -133,16 +148,19 @@ _FEW_SHOT_ANSWER_RELEVANCE: list[tuple[str, str, str, str, list[str]]] = [
 def judge_answer_relevance(
     trace: dict,
     *,
-    model: str = "mimo-v2.5-pro",
+    model: str | None = None,
+    rubric_path: Path = DEFAULT_RUBRIC_PATH,
 ) -> EvalResult:
     """A|Q judge: does the response directly answer the user's question?"""
+    model = model or get_default_judge_model()
+    rubric = load_rubric("answer_relevance", rubric_path)
     messages: list[dict] = []
-    for question, answer, verdict, critique, evidence in _FEW_SHOT_ANSWER_RELEVANCE:
-        messages.append({"role": "user", "content": f"问题：{question}\n回复：{answer}"})
+    for ex in rubric["few_shot"]:
+        messages.append({"role": "user", "content": f"问题：{ex['question']}\n回复：{ex['answer']}"})
         messages.append({
             "role": "assistant",
             "content": json.dumps(
-                {"verdict": verdict, "critique": critique, "evidence": evidence},
+                {"verdict": ex["verdict"], "critique": ex.get("critique", ""), "evidence": ex.get("evidence", [])},
                 ensure_ascii=False,
             ),
         })
@@ -152,7 +170,7 @@ def judge_answer_relevance(
         "content": f"问题：{trace['question']}\n回复：{trace['actual_answer']}",
     })
 
-    raw = _call_llm(_SYSTEM_ANSWER_RELEVANCE, messages, model=model)
+    raw = _call_llm(rubric["system_prompt"], messages, model=model)
     dim = _parse_judge_response(raw, dimension="answer_relevance", model=model)
     return EvalResult(trace_id=trace["id"], dimensions=[dim])
 
@@ -222,9 +240,40 @@ _FEW_SHOT_FAITHFULNESS: list[tuple[str, str, str, str, str, list[str]]] = [
 ]
 
 
-def _build_context_block(trace: dict) -> str:
-    doc = trace.get("doc_context", "").strip()
-    faq = trace.get("faq_context", "").strip()
+_HARDCODED_RUBRIC = {
+    "answer_relevance": {
+        "system_prompt": _SYSTEM_ANSWER_RELEVANCE,
+        "few_shot": [
+            {"question": q, "answer": a, "verdict": v, "critique": c, "evidence": e}
+            for q, a, v, c, e in _FEW_SHOT_ANSWER_RELEVANCE
+        ],
+    },
+    "faithfulness": {
+        "system_prompt": _SYSTEM_FAITHFULNESS,
+        "few_shot": [
+            {"doc_context": d, "faq_context": f, "answer": a, "verdict": v, "critique": c, "evidence": e}
+            for d, f, a, v, c, e in _FEW_SHOT_FAITHFULNESS
+        ],
+    },
+}
+
+
+def load_rubric(dimension: str, rubric_path: Path = DEFAULT_RUBRIC_PATH) -> dict:
+    """Return rubric dict for a judge dimension, falling back to hardcoded defaults."""
+    fallback = _HARDCODED_RUBRIC[dimension]
+    try:
+        data = json.loads(rubric_path.read_text(encoding="utf-8"))
+        return deepcopy(data[dimension])
+    except FileNotFoundError:
+        return deepcopy(fallback)
+    except Exception as exc:
+        logger.warning("falling back to hardcoded rubric for %s from %s: %s", dimension, rubric_path, exc)
+        return deepcopy(fallback)
+
+
+def _format_context_block(doc_context: str, faq_context: str) -> str:
+    doc = doc_context.strip()
+    faq = faq_context.strip()
     if not doc and not faq:
         return "(检索上下文为空)"
     parts = []
@@ -235,25 +284,27 @@ def _build_context_block(trace: dict) -> str:
     return "\n\n".join(parts)
 
 
+def _build_context_block(trace: dict) -> str:
+    return _format_context_block(trace.get("doc_context", ""), trace.get("faq_context", ""))
+
+
 def judge_faithfulness(
     trace: dict,
     *,
-    model: str = "mimo-v2.5-pro",
+    model: str | None = None,
+    rubric_path: Path = DEFAULT_RUBRIC_PATH,
 ) -> EvalResult:
     """A|C judge: are the answer's specific claims grounded in the retrieved context?"""
+    model = model or get_default_judge_model()
+    rubric = load_rubric("faithfulness", rubric_path)
     messages: list[dict] = []
-    for doc_ctx, faq_ctx, answer, verdict, critique, evidence in _FEW_SHOT_FAITHFULNESS:
-        ctx_block = "(检索上下文为空)" if not doc_ctx and not faq_ctx else (
-            "\n\n".join(filter(None, [
-                f"doc_context:\n{doc_ctx}" if doc_ctx else "",
-                f"faq_context:\n{faq_ctx}" if faq_ctx else "",
-            ]))
-        )
-        messages.append({"role": "user", "content": f"检索上下文：\n{ctx_block}\n\n回复：{answer}"})
+    for ex in rubric["few_shot"]:
+        ctx_block = _format_context_block(ex.get("doc_context", ""), ex.get("faq_context", ""))
+        messages.append({"role": "user", "content": f"检索上下文：\n{ctx_block}\n\n回复：{ex['answer']}"})
         messages.append({
             "role": "assistant",
             "content": json.dumps(
-                {"verdict": verdict, "critique": critique, "evidence": evidence},
+                {"verdict": ex["verdict"], "critique": ex.get("critique", ""), "evidence": ex.get("evidence", [])},
                 ensure_ascii=False,
             ),
         })
@@ -263,7 +314,7 @@ def judge_faithfulness(
         "content": f"检索上下文：\n{_build_context_block(trace)}\n\n回复：{trace['actual_answer']}",
     })
 
-    raw = _call_llm(_SYSTEM_FAITHFULNESS, messages, model=model, max_tokens=2000)
+    raw = _call_llm(rubric["system_prompt"], messages, model=model, max_tokens=2000)
     dim = _parse_judge_response(raw, dimension="faithfulness", model=model)
     return EvalResult(trace_id=trace["id"], dimensions=[dim])
 
@@ -271,8 +322,14 @@ def judge_faithfulness(
 # ── Combined runner ───────────────────────────────────────────────────────────
 
 
-def run_all_judges(trace: dict, *, model: str = "mimo-v2.5-pro") -> EvalResult:
+def run_all_judges(
+    trace: dict,
+    *,
+    model: str | None = None,
+    rubric_path: Path = DEFAULT_RUBRIC_PATH,
+) -> EvalResult:
     """Run all judge dimensions and combine into one EvalResult."""
-    ar = judge_answer_relevance(trace, model=model)
-    faith = judge_faithfulness(trace, model=model)
+    model = model or get_default_judge_model()
+    ar = judge_answer_relevance(trace, model=model, rubric_path=rubric_path)
+    faith = judge_faithfulness(trace, model=model, rubric_path=rubric_path)
     return EvalResult(trace_id=trace["id"], dimensions=ar.dimensions + faith.dimensions)

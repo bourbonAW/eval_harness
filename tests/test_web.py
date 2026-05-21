@@ -235,6 +235,14 @@ def test_get_judge_serves_judge_page(client):
     assert 'href="/"' in html
 
 
+def test_get_judge_page_includes_rubric_editor_shell(client):
+    html = client.get("/judge").get_data(as_text=True)
+    assert "编辑 Rubric" in html
+    assert 'id="rubricOverlay"' in html
+    assert "/api/rubric/" in html
+    assert "openAddFromTraces" in html
+
+
 def test_get_root_html_uses_human_annotation_not_latest(client):
     html = client.get("/").get_data(as_text=True)
     assert "human_annotation" in html
@@ -484,7 +492,7 @@ def test_get_traces_human_annotation_is_none_when_absent(client):
     assert body[0]["human_annotation"] is None
 
 
-def _fake_judge(trace, *, model="mimo-v2.5-pro"):
+def _fake_judge(trace, *, model="mimo-v2.5-pro", rubric_path=None):
     return EvalResult(
         trace_id=trace["id"],
         dimensions=[
@@ -514,6 +522,30 @@ def test_post_judge_saves_result_and_returns_eval_result(client, data_dir):
     assert "judged_at" in rows[0]
 
 
+def test_judge_page_uses_env_default_model(data_dir, monkeypatch):
+    monkeypatch.setenv("JUDGE_MODEL", "env-judge-model")
+    c = _make_client(data_dir)
+
+    html = c.get("/judge").get_data(as_text=True)
+
+    assert '<option value="env-judge-model" selected>env-judge-model</option>' in html
+
+
+def test_post_judge_uses_env_default_model_when_missing(data_dir, monkeypatch):
+    monkeypatch.setenv("JUDGE_MODEL", "env-judge-model")
+    c = _make_client(data_dir)
+    captured = {}
+
+    def fake_with_model(trace, *, model="mimo-v2.5-pro", rubric_path=None):
+        captured["model"] = model
+        return _fake_judge(trace, model=model)
+
+    with patch("eval.web.run_all_judges", side_effect=fake_with_model):
+        c.post("/api/judge", json={"trace_id": "q_001"})
+
+    assert captured["model"] == "env-judge-model"
+
+
 def test_post_judge_unknown_trace_returns_404(client, data_dir):
     with patch("eval.web.run_all_judges", side_effect=_fake_judge):
         resp = client.post("/api/judge", json={"trace_id": "q_999"})
@@ -524,7 +556,7 @@ def test_post_judge_unknown_trace_returns_404(client, data_dir):
 def test_post_judge_respects_model_param(client):
     captured = {}
 
-    def fake_with_model(trace, *, model="mimo-v2.5-pro"):
+    def fake_with_model(trace, *, model="mimo-v2.5-pro", rubric_path=None):
         captured["model"] = model
         return _fake_judge(trace, model=model)
 

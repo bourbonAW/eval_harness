@@ -22,13 +22,14 @@
 ## 常用命令
 
 ```bash
-# 采集 traces（更新问题集后重跑）
-uv run python -m eval.collectors.workflow_collector data/questions.jsonl data/traces.jsonl
-
-# 标注 & Judge UI（单一服务）
+# 启动统一 Web UI（含采集、标注、Judge 三个页面）
 uv run python -m eval.web --port 5000 --annotator <name>
-# 标注 UI: http://127.0.0.1:5000/
-# Judge UI: http://127.0.0.1:5000/judge
+# Collect UI:   http://127.0.0.1:5000/collect  ← 管理问题集 + 触发采集
+# Annotate UI:  http://127.0.0.1:5000/
+# Judge UI:     http://127.0.0.1:5000/judge
+
+# 也可直接用 CLI 采集 traces（跳过浏览器）
+uv run python -m eval.collectors.workflow_collector data/questions.jsonl data/traces.jsonl
 
 # 单元测试
 uv run pytest tests/ -m "not integration" -q
@@ -41,7 +42,7 @@ uv run pytest tests/ -m integration -v
 
 | 文件 | 管理方式 | 说明 |
 |------|---------|------|
-| `data/questions.jsonl` | git 管理 | 人工维护的测试问题集 |
+| `data/questions.jsonl` | git 管理 | 测试问题集；可在 /collect 页面「问题集」Tab 增删改，或直接编辑文件 |
 | `data/dataset.jsonl` | git 管理 | 人工标注的 gold standard |
 | `data/traces.jsonl` | gitignore | collector 生成，可重新生成 |
 | `data/judge_results.jsonl` | gitignore | judge 生成，可重新生成 |
@@ -64,10 +65,10 @@ Judge UI strip 下方实时显示 TP/FP/FN/TN + Precision/Recall/F1：
 ## 当用户说"继续推进 flywheel"时
 
 优先建议以下顺序：
-1. 在 `data/questions.jsonl` 加新问题（优先 pass 类，当前 pass:fail = 2:7，严重失衡）
-2. 重跑 collector 生成新 traces
-3. 启动标注 UI 标注新 traces
-4. Run All judges，观察 F1 变化
+1. 在 /collect 页面「问题集」Tab 加新问题（优先 pass 类，当前 pass:fail = 2:7，严重失衡）
+2. 在 /collect 页面「采集」Tab 触发 trace 采集（或 CLI 重跑 collector）
+3. 启动 /collect 页面完成后，访问 `/` 标注新 traces
+4. 访问 `/judge` Run All judges，观察 F1 变化
 5. F1 稳定在 70%+ 后，再考虑 Stage 3 Fix 或 Stage 6 生产接入
 
 ## 已知 workflow bug（Stage 3 待修复）

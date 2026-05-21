@@ -284,6 +284,43 @@
     .toast.show { display: block; }
     .toast.error   { background: var(--fail-light);  color: var(--fail);  border-color: var(--fail-border); }
     .toast.success { background: var(--pass-light); color: var(--pass); border-color: var(--pass-border); }
+    /* Page navigation FAB */
+    .page-nav-fab {
+      position: fixed;
+      bottom: 20px;
+      right: calc(var(--sidebar-w) + 16px);
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 4px;
+      box-shadow: 0 3px 14px rgba(0,0,0,.13);
+      display: flex;
+      gap: 3px;
+      z-index: 50;
+    }
+    .page-nav-fab span,
+    .page-nav-fab a {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 5px;
+      letter-spacing: .04em;
+      text-decoration: none;
+      transition: all .12s;
+    }
+    .page-nav-fab .fab-active {
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 1px 5px rgba(37,99,235,.3);
+    }
+    .page-nav-fab a.fab-link {
+      color: var(--text-2);
+    }
+    .page-nav-fab a.fab-link:hover {
+      background: var(--bg);
+      color: var(--text);
+    }
   </style>
 </head>
 <body>
@@ -294,7 +331,6 @@
       <div class="header">
         <span class="header-label">Eval · Stage 2</span>
         <span class="progress-badge" id="progress"></span>
-        <a href="/judge" style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-3);text-decoration:none;">Judge UI →</a>
       </div>
       <div class="strip" id="strip"></div>
       <div class="divider"></div>
@@ -635,5 +671,10 @@ document.addEventListener('keydown', e => {
 
 init();
 </script>
+  <div class="page-nav-fab">
+    <a href="/collect" class="fab-link">← Collect</a>
+    <span class="fab-active">标注</span>
+    <a href="/judge" class="fab-link">Judge →</a>
+  </div>
 </body>
 </html>
