@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eval · Collect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:          #f4f2ee;
+      --surface:     #ffffff;
+      --surface-2:   #faf9f7;
+      --border:      #e8e3da;
+      --text:        #1c1a17;
+      --text-2:      #6b6356;
+      --text-3:      #a8a099;
+      --pass:        #16a34a;
+      --pass-light:  #f0fdf4;
+      --pass-border: #86efac;
+      --fail:        #dc2626;
+      --fail-light:  #fef2f2;
+      --fail-border: #fca5a5;
+      --skip:        #c2690a;
+      --skip-light:  #fff7ed;
+      --skip-border: #fdba74;
+      --blue:        #2563eb;
+      --blue-light:  #eff6ff;
+      --blue-border: #bfdbfe;
+      --radius:      8px;
+      --sidebar-w:   320px;
+    }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+                   "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: grid;
+      grid-template-columns: 1fr var(--sidebar-w);
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .header {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .header-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-2);
+    }
+
+    .main {
+      overflow-y: auto;
+      padding: 28px 32px;
+      position: relative;
+    }
+    .sidebar {
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      padding: 20px 18px;
+      overflow-y: auto;
+    }
+
+    .page-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+    .page-desc {
+      font-size: 13px;
+      color: var(--text-2);
+      line-height: 1.65;
+      margin-bottom: 24px;
+    }
+
+    .path-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-2);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 20px;
+    }
+    .path-badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      min-width: 36px;
+    }
+    .path-arrow { color: var(--text-3); }
+    .path-value { overflow-wrap: anywhere; }
+
+    .collect-btn {
+      width: 100%;
+      max-width: 400px;
+      padding: 14px;
+      font-size: 14px;
+      font-weight: 700;
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-family: inherit;
+      box-shadow: 0 3px 10px rgba(37,99,235,.30);
+      transition: all .14s;
+      margin-bottom: 10px;
+      letter-spacing: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .collect-btn:hover:not(:disabled) {
+      background: #1d4ed8;
+      box-shadow: 0 5px 16px rgba(37,99,235,.38);
+      transform: translateY(-1px);
+    }
+    .collect-btn:active:not(:disabled) { transform: translateY(0); }
+    .collect-btn:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .collect-btn.done-success {
+      background: var(--pass);
+      box-shadow: 0 3px 10px rgba(22,163,74,.28);
+    }
+    .collect-btn.done-warning {
+      background: var(--skip);
+      box-shadow: 0 3px 10px rgba(194,105,10,.28);
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      flex-shrink: 0;
+    }
+
+    .status-area {
+      max-width: 400px;
+      padding: 10px 14px;
+      border-radius: 6px;
+      border: 1px solid;
+      font-size: 12px;
+      line-height: 1.6;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .status-area.idle {
+      background: var(--surface-2);
+      border-color: var(--border);
+      color: var(--text-3);
+      font-style: italic;
+    }
+    .status-area.running {
+      background: var(--blue-light);
+      border-color: var(--blue-border);
+      color: var(--blue);
+    }
+    .status-area.success {
+      background: var(--pass-light);
+      border-color: var(--pass-border);
+      color: var(--pass);
+    }
+    .status-area.warning {
+      background: var(--skip-light);
+      border-color: var(--skip-border);
+      color: var(--skip);
+    }
+    .status-area.error {
+      background: var(--fail-light);
+      border-color: var(--fail-border);
+      color: var(--fail);
+    }
+    .failed-list {
+      margin-top: 4px;
+      opacity: .75;
+      font-size: 10px;
+      overflow-wrap: anywhere;
+    }
+
+    .sidebar-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-bottom: 8px;
+      display: block;
+    }
+    .stat-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+    .stat-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-bottom: 4px;
+    }
+    .stat-val {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .stat-sub {
+      font-size: 10px;
+      color: var(--text-3);
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+    }
+
+    .page-nav-fab {
+      position: fixed;
+      bottom: 20px;
+      right: calc(var(--sidebar-w) + 16px);
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 4px;
+      box-shadow: 0 3px 14px rgba(0,0,0,.13);
+      display: flex;
+      gap: 3px;
+      z-index: 50;
+    }
+    .page-nav-fab span,
+    .page-nav-fab a {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 5px;
+      letter-spacing: .04em;
+      text-decoration: none;
+      transition: all .12s;
+    }
+    .page-nav-fab .fab-active {
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 1px 5px rgba(37,99,235,.3);
+    }
+    .page-nav-fab a.fab-link { color: var(--text-2); }
+    .page-nav-fab a.fab-link:hover {
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* ─── Header tabs ─── */
+    .header-tabs {
+      display: flex;
+      gap: 2px;
+      margin-left: 16px;
+    }
+    .htab {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .05em;
+      padding: 4px 12px;
+      border-radius: 5px;
+      border: none;
+      background: transparent;
+      color: var(--text-3);
+      cursor: pointer;
+      transition: all .12s;
+    }
+    .htab:hover { background: var(--bg); color: var(--text-2); }
+    .htab.htab-active {
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 1px 5px rgba(37,99,235,.3);
+    }
+
+    /* ─── Questions panel ─── */
+    .q-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .q-count {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      flex: 1;
+    }
+    .q-add-btn {
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 14px;
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(37,99,235,.25);
+      transition: background .12s;
+    }
+    .q-add-btn:hover { background: #1d4ed8; }
+
+    .q-add-form {
+      background: var(--blue-light);
+      border: 1px solid var(--blue-border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      margin-bottom: 8px;
+    }
+
+    .q-row {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+    .q-row-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+    }
+    .q-id {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-3);
+      min-width: 44px;
+      flex-shrink: 0;
+    }
+    .q-text {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .q-btns { display: flex; gap: 4px; flex-shrink: 0; }
+    .q-btn {
+      font-family: inherit;
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-2);
+      cursor: pointer;
+      transition: all .1s;
+    }
+    .q-btn:hover { background: var(--bg); }
+    .q-btn.del:hover {
+      color: var(--fail);
+      border-color: #fca5a5;
+      background: var(--fail-light);
+    }
+    .q-edit-form {
+      padding: 12px 14px;
+      background: var(--blue-light);
+      border-top: 1px solid var(--blue-border);
+    }
+    .q-del-confirm {
+      padding: 8px 14px;
+      background: var(--fail-light);
+      border-top: 1px solid #fca5a5;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--fail);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .q-del-btns { display: flex; gap: 6px; }
+    .q-del-btn {
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 4px;
+      border: 1px solid;
+      cursor: pointer;
+    }
+    .q-del-btn.ok { background: var(--fail); color: #fff; border-color: var(--fail); }
+    .q-del-btn.ok:hover { background: #b91c1c; }
+    .q-del-btn.cancel { background: var(--surface); color: var(--text-2); border-color: var(--border); }
+
+    .form-field { margin-bottom: 10px; }
+    .form-field label {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-bottom: 4px;
+    }
+    .form-field textarea {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--blue-border);
+      border-radius: 5px;
+      font-size: 13px;
+      font-family: inherit;
+      background: #fff;
+      color: var(--text);
+      resize: vertical;
+      min-height: 64px;
+    }
+    .form-actions { display: flex; gap: 8px; margin-top: 2px; }
+    .form-btn-save {
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 16px;
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .form-btn-cancel {
+      font-family: inherit;
+      font-size: 12px;
+      padding: 6px 14px;
+      background: var(--surface);
+      color: var(--text-2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    @media (max-width: 760px) {
+      body {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+        overflow: auto;
+      }
+      .main,
+      .sidebar {
+        overflow: visible;
+      }
+      .sidebar {
+        border-left: none;
+        border-top: 1px solid var(--border);
+      }
+      .page-nav-fab {
+        right: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <span class="header-label">Eval · Collect</span>
+  <div class="header-tabs">
+    <button class="htab htab-active" id="tabCollect" onclick="switchTab('collect')">采集</button>
+    <button class="htab" id="tabQuestions" onclick="switchTab('questions')">问题集</button>
+  </div>
+</div>
+
+<main class="main">
+<div id="collectPanel">
+  <h1 class="page-title">采集 Traces</h1>
+  <p class="page-desc">
+    从问题集生成 bot 对话 traces，写入 traces 文件。<br>
+    采集完成后前往标注页开始人工标注。
+  </p>
+
+  <div class="path-row">
+    <span class="path-badge">输入</span>
+    <span class="path-value" id="questionsPath">data/questions.jsonl</span>
+    <span class="path-arrow">→</span>
+    <span class="path-value" id="tracesPath">data/traces.jsonl</span>
+    <span class="path-badge" style="margin-left:auto">输出</span>
+  </div>
+
+  <button class="collect-btn" id="collectBtn" onclick="startCollect()">
+    ▶ 开始采集
+  </button>
+
+  <div class="status-area idle" id="statusArea">等待触发...</div>
+</div><!-- #collectPanel -->
+
+<div id="questionsPanel" style="display:none">
+  <div class="q-toolbar">
+    <span class="q-count" id="qCount">问题集 · 0 条</span>
+    <button class="q-add-btn" onclick="startAdd()">+ 添加问题</button>
+  </div>
+  <div id="qAddRow" class="q-add-form" style="display:none">
+    <div class="form-field">
+      <label>问题</label>
+      <textarea id="fQ_add" rows="3" placeholder="输入问题..."></textarea>
+    </div>
+    <div class="form-field">
+      <label>期望回答</label>
+      <textarea id="fA_add" rows="3" placeholder="输入期望回答..."></textarea>
+    </div>
+    <div class="form-actions">
+      <button class="form-btn-save" onclick="saveAdd()">添加</button>
+      <button class="form-btn-cancel" onclick="cancelAdd()">取消</button>
+    </div>
+  </div>
+  <div id="questionsList"></div>
+</div>
+</main>
+
+<aside class="sidebar">
+  <span class="sidebar-label">当前数据集</span>
+  <div class="stat-card">
+    <div class="stat-label">问题数</div>
+    <div class="stat-val" id="questionCount">-</div>
+    <div class="stat-sub" id="questionSub">data/questions.jsonl</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">已有 Traces</div>
+    <div class="stat-val" id="traceCount">-</div>
+    <div class="stat-sub" id="traceSub">data/traces.jsonl</div>
+  </div>
+</aside>
+
+<div class="page-nav-fab">
+  <span class="fab-active">Collect</span>
+  <a href="/" class="fab-link">标注 →</a>
+  <a href="/judge" class="fab-link">Judge →</a>
+</div>
+
+<script>
+let pollTimer = null;
+
+async function init() {
+  try {
+    const s = await fetch('/api/collect/status').then(r => r.json());
+    renderState(s);
+    if (s.status === 'running') startPolling();
+    await refreshInfo();
+    await loadQuestions();
+  } catch (e) {
+    renderState({ status: 'error', message: '加载失败：' + e.message, failed: [] });
+  }
+}
+
+async function startCollect() {
+  const resp = await fetch('/api/collect', { method: 'POST' });
+  if (resp.status === 409) {
+    const s = await fetch('/api/collect/status').then(r => r.json());
+    renderState(s);
+    if (s.status === 'running') startPolling();
+    return;
+  }
+  if (!resp.ok) {
+    renderState({ status: 'error', message: '启动失败：HTTP ' + resp.status, failed: [] });
+    return;
+  }
+  renderState({ status: 'running', failed: [] });
+  startPolling();
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    const s = await fetch('/api/collect/status').then(r => r.json());
+    renderState(s);
+    if (s.status !== 'running') {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      await refreshInfo();
+    }
+  }, 3000);
+}
+
+async function refreshInfo() {
+  const info = await fetch('/api/collect/info').then(r => r.json());
+  document.getElementById('questionCount').textContent = info.question_count;
+  document.getElementById('traceCount').textContent = info.trace_count;
+  document.getElementById('questionsPath').textContent = info.questions_path || 'data/questions.jsonl';
+  document.getElementById('tracesPath').textContent = info.traces_path || 'data/traces.jsonl';
+  document.getElementById('questionSub').textContent = info.questions_path || 'data/questions.jsonl';
+  document.getElementById('traceSub').textContent = info.traces_path || 'data/traces.jsonl';
+}
+
+function renderState(s) {
+  const btn = document.getElementById('collectBtn');
+  const area = document.getElementById('statusArea');
+  area.className = 'status-area ' + s.status;
+  area.textContent = '';
+  btn.className = 'collect-btn';
+  btn.disabled = false;
+
+  switch (s.status) {
+    case 'idle':
+      btn.textContent = '▶ 开始采集';
+      area.textContent = '等待触发...';
+      break;
+    case 'running':
+      btn.innerHTML = '<div class="spinner"></div>正在采集...';
+      btn.disabled = true;
+      area.textContent = '采集中，请稍候（约 1-3 分钟）';
+      break;
+    case 'success':
+      btn.className = 'collect-btn done-success';
+      btn.textContent = '✓ 采集完成';
+      area.textContent = s.message + (s.elapsed_s ? ` · 耗时 ${s.elapsed_s}s` : '');
+      break;
+    case 'warning':
+      btn.className = 'collect-btn done-warning';
+      btn.textContent = '⚠ 部分完成';
+      area.textContent = s.message + (s.elapsed_s ? ` · 耗时 ${s.elapsed_s}s` : '');
+      appendFailedList(area, s.failed);
+      break;
+    case 'error':
+      btn.textContent = '▶ 重新采集';
+      area.textContent = s.message || '采集失败';
+      appendFailedList(area, s.failed);
+      break;
+  }
+}
+
+function appendFailedList(area, failed) {
+  if (!failed || failed.length === 0) return;
+  const el = document.createElement('div');
+  el.className = 'failed-list';
+  el.textContent = '失败：' + failed.join(', ');
+  area.appendChild(el);
+}
+
+init();
+
+// ─── Tab switching ────────────────────────────────────────
+function switchTab(tab) {
+  _closeActive();  // discard any unsaved form before switching tabs
+  const toCollect = tab === 'collect';
+  document.getElementById('collectPanel').style.display = toCollect ? '' : 'none';
+  document.getElementById('questionsPanel').style.display = toCollect ? 'none' : '';
+  document.getElementById('tabCollect').classList.toggle('htab-active', toCollect);
+  document.getElementById('tabQuestions').classList.toggle('htab-active', !toCollect);
+  if (!toCollect) renderQuestions();
+}
+
+// ─── Questions CRUD ───────────────────────────────────────
+let _questions = [];
+let _activeEditId = null; // null | 'add' | 'del_<id>' | '<id>'
+
+async function loadQuestions() {
+  try {
+    _questions = await fetch('/api/questions').then(r => r.json());
+  } catch (e) {
+    console.error('loadQuestions failed', e);
+  }
+}
+
+function renderQuestions() {
+  const list = document.getElementById('questionsList');
+  list.innerHTML = '';
+  document.getElementById('qCount').textContent = `问题集 · ${_questions.length} 条`;
+  _questions.forEach(q => list.appendChild(_buildRow(q)));
+}
+
+function _buildRow(q) {
+  const row = document.createElement('div');
+  row.className = 'q-row';
+  row.id = 'row_' + q.id;
+
+  // header line
+  const head = document.createElement('div');
+  head.className = 'q-row-head';
+  const idSpan = document.createElement('span');
+  idSpan.className = 'q-id';
+  idSpan.textContent = q.id;
+  const textSpan = document.createElement('span');
+  textSpan.className = 'q-text';
+  textSpan.title = q.question;
+  textSpan.textContent = q.question;
+  const btns = document.createElement('span');
+  btns.className = 'q-btns';
+  const editBtn = document.createElement('button');
+  editBtn.className = 'q-btn';
+  editBtn.textContent = '编辑';
+  editBtn.onclick = () => startEdit(q.id);
+  const delBtn = document.createElement('button');
+  delBtn.className = 'q-btn del';
+  delBtn.textContent = '删';
+  delBtn.onclick = () => startDelete(q.id);
+  btns.append(editBtn, delBtn);
+  head.append(idSpan, textSpan, btns);
+  row.appendChild(head);
+
+  // inline edit form (hidden)
+  const form = document.createElement('div');
+  form.className = 'q-edit-form';
+  form.id = 'editForm_' + q.id;
+  form.style.display = 'none';
+  const qField = _makeField('问题', 'fQ_' + q.id);
+  const aField = _makeField('期望回答', 'fA_' + q.id);
+  const formActions = document.createElement('div');
+  formActions.className = 'form-actions';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'form-btn-save';
+  saveBtn.textContent = '保存';
+  saveBtn.onclick = () => saveEdit(q.id);
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'form-btn-cancel';
+  cancelBtn.textContent = '取消';
+  cancelBtn.onclick = () => cancelEdit(q.id);
+  formActions.append(saveBtn, cancelBtn);
+  form.append(qField, aField, formActions);
+  row.appendChild(form);
+
+  // delete confirm (hidden)
+  const delConfirm = document.createElement('div');
+  delConfirm.className = 'q-del-confirm';
+  delConfirm.id = 'delConfirm_' + q.id;
+  delConfirm.style.display = 'none';
+  const msg = document.createElement('span');
+  msg.textContent = '确认删除？';
+  const delBtns = document.createElement('span');
+  delBtns.className = 'q-del-btns';
+  const okBtn = document.createElement('button');
+  okBtn.className = 'q-del-btn ok';
+  okBtn.textContent = '✓';
+  okBtn.onclick = () => confirmDelete(q.id);
+  const cnclBtn = document.createElement('button');
+  cnclBtn.className = 'q-del-btn cancel';
+  cnclBtn.textContent = '✗';
+  cnclBtn.onclick = () => cancelDelete(q.id);
+  delBtns.append(okBtn, cnclBtn);
+  delConfirm.append(msg, delBtns);
+  row.appendChild(delConfirm);
+
+  return row;
+}
+
+function _makeField(labelText, textareaId) {
+  const field = document.createElement('div');
+  field.className = 'form-field';
+  const label = document.createElement('label');
+  label.textContent = labelText;
+  const ta = document.createElement('textarea');
+  ta.id = textareaId;
+  ta.rows = 3;
+  field.append(label, ta);
+  return field;
+}
+
+function _closeActive() {
+  if (_activeEditId === null) return;
+  if (_activeEditId === 'add') {
+    document.getElementById('qAddRow').style.display = 'none';
+  } else if (_activeEditId.startsWith('del_')) {
+    document.getElementById('delConfirm_' + _activeEditId.slice(4)).style.display = 'none';
+  } else {
+    document.getElementById('editForm_' + _activeEditId).style.display = 'none';
+  }
+  _activeEditId = null;
+}
+
+function startEdit(qid) {
+  if (_activeEditId === qid) return;
+  _closeActive();
+  const q = _questions.find(q => q.id === qid);
+  document.getElementById('fQ_' + qid).value = q.question;
+  document.getElementById('fA_' + qid).value = q.expected_answer;
+  document.getElementById('editForm_' + qid).style.display = '';
+  _activeEditId = qid;
+}
+
+function cancelEdit(qid) {
+  document.getElementById('editForm_' + qid).style.display = 'none';
+  _activeEditId = null;
+}
+
+async function saveEdit(qid) {
+  const question = document.getElementById('fQ_' + qid).value.trim();
+  const expected_answer = document.getElementById('fA_' + qid).value.trim();
+  if (!question || !expected_answer) return;
+  const resp = await fetch('/api/questions/' + qid, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, expected_answer }),
+  });
+  if (!resp.ok) return;
+  const updated = await resp.json();
+  const idx = _questions.findIndex(q => q.id === qid);
+  if (idx !== -1) _questions[idx] = updated;
+  _activeEditId = null;
+  renderQuestions();
+}
+
+function startDelete(qid) {
+  _closeActive();
+  document.getElementById('delConfirm_' + qid).style.display = '';
+  _activeEditId = 'del_' + qid;
+}
+
+function cancelDelete(qid) {
+  document.getElementById('delConfirm_' + qid).style.display = 'none';
+  _activeEditId = null;
+}
+
+async function confirmDelete(qid) {
+  const resp = await fetch('/api/questions/' + qid, { method: 'DELETE' });
+  if (!resp.ok) return;
+  _questions = _questions.filter(q => q.id !== qid);
+  _activeEditId = null;
+  renderQuestions();
+  await refreshInfo();
+}
+
+function startAdd() {
+  _closeActive();
+  document.getElementById('fQ_add').value = '';
+  document.getElementById('fA_add').value = '';
+  document.getElementById('qAddRow').style.display = '';
+  _activeEditId = 'add';
+}
+
+function cancelAdd() {
+  document.getElementById('qAddRow').style.display = 'none';
+  _activeEditId = null;
+}
+
+async function saveAdd() {
+  const question = document.getElementById('fQ_add').value.trim();
+  const expected_answer = document.getElementById('fA_add').value.trim();
+  if (!question || !expected_answer) return;
+  const resp = await fetch('/api/questions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, expected_answer }),
+  });
+  if (!resp.ok) return;
+  const newQ = await resp.json();
+  _questions.push(newQ);
+  _activeEditId = null;
+  document.getElementById('qAddRow').style.display = 'none';
+  renderQuestions();
+  await refreshInfo();
+}
+</script>
+</body>
+</html>
