@@ -98,13 +98,28 @@ def test_delete_question_unknown_id_returns_404(data_dir):
     assert c.delete("/api/questions/q_999").status_code == 404
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [ ] **Step 2: Add atomic write smoke test**
 
-```bash
-uv run pytest tests/test_web.py -v -k "questions" --tb=short
+Also append this test (verifies `.tmp` is cleaned up after successful write):
+
+```python
+def test_save_questions_no_tmp_after_success(tmp_path):
+    from eval.web import _save_questions
+    questions = [{"id": "q_001", "question": "q", "expected_answer": "a"}]
+    path = tmp_path / "questions.jsonl"
+    _save_questions(questions, path)
+    assert path.exists()
+    assert not (tmp_path / "questions.tmp").exists()
+    assert _read_jsonl(path) == questions
 ```
 
-Expected: **8 FAILED** with `404 Not Found` or similar (routes don't exist yet).
+- [ ] **Step 3: Run tests to verify RED**
+
+```bash
+uv run pytest tests/test_web.py -v -k "question" --tb=short
+```
+
+Expected: **8 FAILED** with `404 Not Found` or similar (routes don't exist yet); `test_save_questions_no_tmp_after_success` **1 ERROR** (`ImportError: cannot import _save_questions`).
 
 ---
 
@@ -249,10 +264,10 @@ Insert before it:
 - [ ] **Step 7: Run tests to verify GREEN**
 
 ```bash
-uv run pytest tests/test_web.py -v -k "questions" --tb=short
+uv run pytest tests/test_web.py -v -k "question" --tb=short
 ```
 
-Expected: **8 PASSED**
+Expected: **9 PASSED** (8 CRUD + 1 atomic write smoke test)
 
 - [ ] **Step 8: Run full suite to verify no regression**
 
@@ -260,7 +275,7 @@ Expected: **8 PASSED**
 uv run pytest tests/test_web.py -v --tb=short
 ```
 
-Expected: **44 passed** (36 existing + 8 new)
+Expected: **45 passed** (36 existing + 9 new)
 
 - [ ] **Step 9: Commit**
 
@@ -557,6 +572,7 @@ init();
 
 // ─── Tab switching ────────────────────────────────────────
 function switchTab(tab) {
+  _closeActive();  // discard any unsaved form before switching tabs
   const toCollect = tab === 'collect';
   document.getElementById('collectPanel').style.display = toCollect ? '' : 'none';
   document.getElementById('questionsPanel').style.display = toCollect ? 'none' : '';
@@ -803,9 +819,24 @@ async function init() {
 uv run pytest tests/test_web.py -v --tb=short
 ```
 
-Expected: **44 passed**
+Expected: **45 passed**
 
-- [ ] **Step 16: Commit**
+- [ ] **Step 16: Manual smoke test**
+
+```bash
+uv run python -m eval.web --port 5000 --annotator test
+```
+
+Open http://127.0.0.1:5000/collect and verify:
+
+1. **Tab 切换**：点「问题集」Tab → 显示问题列表，计数正确
+2. **编辑**：点任意行「编辑」→ 行内展开表单，预填当前值；修改后「保存」→ 列表刷新
+3. **切 Tab 丢弃**：打开编辑表单后切到「采集」Tab 再切回 → 表单已关闭，再次点「编辑」能正常打开（`_activeEditId` 已清空）
+4. **删除确认**：点「删」→ 出现「确认删除？ ✓ ✗」；点 ✓ 删除，点 ✗ 恢复原状
+5. **新增**：点「+ 添加问题」→ 顶部出现空表单；填写后「添加」→ 新问题出现在列表末尾，侧边栏「问题数」+1
+6. **重置**：切到「采集」Tab → 侧边栏统计数值正确
+
+- [ ] **Step 17: Commit**
 
 ```bash
 git add eval/templates/collect.html
