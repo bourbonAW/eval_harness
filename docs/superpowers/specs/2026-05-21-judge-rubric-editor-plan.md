@@ -28,7 +28,7 @@
 
 - Do NOT use `request.json` — use `request.get_json(silent=True) or {}`
 - Do NOT write rubric JSON directly to final path — always go through `.tmp` → `.replace()`
-- Do NOT access `app.config` outside request context — use `current_app.config` inside route handlers
+- Do NOT use `current_app` — all new routes are defined inside `create_app()` and access `app.config` via closure, matching the existing pattern (web.py:147–205). No `current_app` import needed.
 - Do NOT add `dataclasses` or new third-party deps — judges.py already has its dependencies
 
 ---
@@ -123,7 +123,7 @@ Confirm tests **fail** before implementation: `uv run pytest tests/test_rubric.p
 
 ### Task 1.3 — GREEN: Implement `load_rubric` in `judges.py`
 
-Add after the existing `_parse_judge_response` function (after line 79):
+Add **after `_FEW_SHOT_FAITHFULNESS`** (the last constant, around line 220, before `run_all_judges`). Placing it earlier causes an import-time `NameError` because `_SYSTEM_ANSWER_RELEVANCE` and `_FEW_SHOT_ANSWER_RELEVANCE` are not yet defined at line 79.
 
 ```python
 _HARDCODED_RUBRIC = {
@@ -152,7 +152,7 @@ def load_rubric(dimension: str, rubric_path: Path) -> dict:
         return _HARDCODED_RUBRIC[dimension]
 ```
 
-**Note:** `_HARDCODED_RUBRIC` must be defined **after** the `_SYSTEM_*` and `_FEW_SHOT_*` constants.
+**Note:** Also add `from pathlib import Path` to `judges.py` imports (currently missing — confirmed: judges.py only imports json, os, dataclasses, anthropic, openai, dotenv).
 
 ---
 
@@ -185,7 +185,7 @@ messages.append({"role": "user", "content": f"检索上下文：\n{ctx_block}\n\
 
 **`run_all_judges` (judges.py:274):** Add `rubric_path` parameter and pass through to both functions.
 
-**Verification:** `uv run pytest tests/test_rubric.py tests/test_judges.py -q`
+**Verification:** `uv run pytest tests/test_rubric.py tests/test_judges.py -m "not integration" -q`
 
 ---
 
@@ -203,7 +203,14 @@ parser.add_argument("--rubric-path", default="data/judge_rubric.json", dest="rub
 ```
 Pass to `create_app(rubric_path=Path(args.rubric_path), ...)`.
 
-**In existing `/api/judge` endpoint:** Pass `rubric_path=current_app.config["RUBRIC_PATH"]` when calling `run_all_judges(trace, model=model, rubric_path=...)`.
+**In existing `/api/judge` endpoint:** Pass `rubric_path=app.config["RUBRIC_PATH"]` when calling `run_all_judges(trace, model=model, rubric_path=...)`.
+
+**Update test fakes:** `tests/test_web.py:485` defines `_fake_judge(trace, *, model=...)` which mocks `run_all_judges`. When web.py passes `rubric_path=...`, the fake will raise `TypeError: unexpected keyword argument`. Fix all fakes that mock `run_all_judges` by adding `rubric_path=None`:
+```python
+def _fake_judge(trace, *, model="mimo-v2.5-pro", rubric_path=None):
+    ...
+```
+Search for all mock patches of `run_all_judges` in `tests/test_web.py` and update their signatures accordingly.
 
 **Verification:** `uv run python -m eval.web --help` shows `--rubric-path`.
 
@@ -289,6 +296,77 @@ def test_put_rubric_answer_relevance_validates_question_field(rubric_client):
     assert resp.status_code == 400
 ```
 
+```python
+# --- Suggest endpoint tests ---
+from unittest.mock import patch
+
+def test_suggest_invalid_dimension_returns_400(rubric_client):
+    client, _ = rubric_client
+    resp = client.post("/api/rubric/bad_dim/suggest")
+    assert resp.status_code == 400
+
+def test_suggest_no_disagreements_returns_empty(rubric_client):
+    # No traces, dataset, or judge_results → fp_fn_count 0
+    client, _ = rubric_client
+    resp = client.post("/api/rubric/answer_relevance/suggest")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["fp_fn_count"] == 0
+    assert body["suggestions"] == []
+
+def test_suggest_mocked_llm_returns_suggestions(rubric_client, tmp_path):
+    client, data_dir = rubric_client
+    # Write a trace, human annotation disagreeing with judge result
+    trace = {"id": "q_001", "question": "q", "actual_answer": "a", "doc_context": "", "faq_context": ""}
+    human = {"id": "q_001", "label": "fail", "critique": "wrong"}
+    jr = {"trace_id": "q_001", "label": "pass", "dimensions": [
+        {"dimension": "answer_relevance", "label": "pass", "critique": "ok"},
+    ], "judged_at": "2026-01-01T00:00:00+00:00"}
+    (data_dir / "traces.jsonl").write_text(json.dumps(trace) + "\n")
+    (data_dir / "dataset.jsonl").write_text(json.dumps(human) + "\n")
+    (data_dir / "judge_results.jsonl").write_text(json.dumps(jr) + "\n")
+    mock_response = json.dumps({"suggestions": [{"type": "system_prompt", "description": "fix", "proposed_full": "new prompt"}]})
+    with patch("eval.judges._call_llm", return_value=mock_response):
+        resp = client.post("/api/rubric/answer_relevance/suggest")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["fp_fn_count"] == 1
+    assert len(body["suggestions"]) == 1
+
+def test_suggest_malformed_llm_json_returns_500(rubric_client, tmp_path):
+    client, data_dir = rubric_client
+    trace = {"id": "q_001", "question": "q", "actual_answer": "a", "doc_context": "", "faq_context": ""}
+    human = {"id": "q_001", "label": "fail", "critique": "wrong"}
+    jr = {"trace_id": "q_001", "label": "pass", "dimensions": [
+        {"dimension": "answer_relevance", "label": "pass", "critique": "ok"},
+    ], "judged_at": "2026-01-01T00:00:00+00:00"}
+    (data_dir / "traces.jsonl").write_text(json.dumps(trace) + "\n")
+    (data_dir / "dataset.jsonl").write_text(json.dumps(human) + "\n")
+    (data_dir / "judge_results.jsonl").write_text(json.dumps(jr) + "\n")
+    with patch("eval.judges._call_llm", return_value="NOT JSON"):
+        resp = client.post("/api/rubric/answer_relevance/suggest")
+    assert resp.status_code == 500
+    assert "error" in resp.get_json()
+
+def test_suggest_stale_warning_when_rubric_newer_than_results(rubric_client):
+    client, data_dir = rubric_client
+    # Write rubric file first (will be newer than judge result timestamp)
+    (data_dir / "rubric.json").write_text(json.dumps({"answer_relevance": {"system_prompt": "p", "few_shot": []}}))
+    trace = {"id": "q_001", "question": "q", "actual_answer": "a", "doc_context": "", "faq_context": ""}
+    human = {"id": "q_001", "label": "fail", "critique": "c"}
+    jr = {"trace_id": "q_001", "label": "pass", "dimensions": [
+        {"dimension": "answer_relevance", "label": "pass", "critique": "ok"},
+    ], "judged_at": "2020-01-01T00:00:00+00:00"}  # old timestamp
+    (data_dir / "traces.jsonl").write_text(json.dumps(trace) + "\n")
+    (data_dir / "dataset.jsonl").write_text(json.dumps(human) + "\n")
+    (data_dir / "judge_results.jsonl").write_text(json.dumps(jr) + "\n")
+    mock_response = json.dumps({"suggestions": []})
+    with patch("eval.judges._call_llm", return_value=mock_response):
+        resp = client.post("/api/rubric/answer_relevance/suggest")
+    assert resp.status_code == 200
+    assert resp.get_json()["stale_warning"] is True
+```
+
 Confirm tests **fail**: `uv run pytest tests/test_rubric_api.py -q`
 
 ---
@@ -317,7 +395,7 @@ def get_rubric(dimension: str):
     if dimension not in _VALID_DIMENSIONS:
         return jsonify({"error": f"unknown dimension: {dimension}"}), 400
     from eval.judges import load_rubric
-    rubric = load_rubric(dimension, current_app.config["RUBRIC_PATH"])
+    rubric = load_rubric(dimension, app.config["RUBRIC_PATH"])
     return jsonify({"dimension": dimension, **rubric})
 ```
 
@@ -341,7 +419,7 @@ def put_rubric(dimension: str):
         if dimension == "answer_relevance" and not (ex.get("question") or "").strip():
             return jsonify({"error": "answer_relevance few_shot question 不能为空"}), 400
     # Read current file, update dimension, write back atomically
-    rubric_path = current_app.config["RUBRIC_PATH"]
+    rubric_path = app.config["RUBRIC_PATH"]
     try:
         current = json.loads(rubric_path.read_text(encoding="utf-8"))
     except Exception:
@@ -360,11 +438,11 @@ def post_rubric_suggest(dimension: str):
         return jsonify({"error": f"unknown dimension: {dimension}"}), 400
 
     # Load data
-    traces_raw = load_jsonl(current_app.config["TRACES_PATH"])
+    traces_raw = load_jsonl(app.config["TRACES_PATH"])
     traces_by_id = {t["id"]: t for t in traces_raw}
-    dataset = load_jsonl(current_app.config["DATASET_PATH"])
+    dataset = load_jsonl(app.config["DATASET_PATH"])
     human_by_id = {r["id"]: r for r in dataset}
-    judge_results = load_latest_judge_results(current_app.config["JUDGE_RESULTS_PATH"])
+    judge_results = load_latest_judge_results(app.config["JUDGE_RESULTS_PATH"])
 
     # Find disagreements: judge per-dimension label vs human overall label
     disagreements = []
@@ -388,7 +466,7 @@ def post_rubric_suggest(dimension: str):
             })
 
     # Check staleness: compare rubric file mtime vs oldest judge result
-    rubric_path = current_app.config["RUBRIC_PATH"]
+    rubric_path = app.config["RUBRIC_PATH"]
     stale_warning = False
     if rubric_path.exists() and disagreements:
         rubric_mtime = rubric_path.stat().st_mtime
@@ -445,7 +523,8 @@ def post_rubric_suggest(dimension: str):
 system_prompt:
 {rubric['system_prompt']}
 
-few_shot 例子数量: {len(rubric['few_shot'])}
+few_shot 例子（共 {len(rubric['few_shot'])} 条）:
+{json.dumps(rubric['few_shot'], ensure_ascii=False, indent=2)}
 
 误判案例（共 {len(disagreements)} 条）:
 {json.dumps(disagreements, ensure_ascii=False, indent=2)}
@@ -700,7 +779,7 @@ Append to the `<style>` block in `eval/templates/judge.html`. Follow the existin
 
 ### Task 3.2 — Add button + modal HTML
 
-**In topbar** (after line 330, inside `.header` element): Add `<button class="rubric-btn" onclick="openRubric()">✎ 编辑 Rubric</button>`.
+**In topbar** (after line 330, inside `.header` element): Add `<button class="rubric-btn" id="rubricBtn">✎ 编辑 Rubric</button>`. **Do not add `onclick` yet** — JS functions don't exist until Phase 4. The Phase 3 verification is visual only (check button appears; do not click).
 
 **Before the closing `</body>` tag:** Add the modal overlay HTML:
 
@@ -768,6 +847,9 @@ let _rubricDirty = false;
 let _rubricFewShot = [];       // current few-shot list (in-memory)
 let _rubricPrompt = '';        // current system prompt (in-memory)
 let _suggestions = [];         // AI suggestions from /suggest
+
+// Wire up the button added in Phase 3 (no onclick was set there)
+document.getElementById('rubricBtn').onclick = openRubric;
 
 function openRubric() {
   _rubricDim = document.getElementById('rubricDimSelect').value;
